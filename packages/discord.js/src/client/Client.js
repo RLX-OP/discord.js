@@ -2,6 +2,8 @@
 
 const process = require('node:process');
 const { Collection } = require('@discordjs/collection');
+const { makeURLSearchParams } = require('@discordjs/rest');
+const { OAuth2Scopes, Routes } = require('discord-api-types/v10');
 const BaseClient = require('./BaseClient');
 const ActionsManager = require('./actions/ActionsManager');
 const ClientVoiceManager = require('./voice/ClientVoiceManager');
@@ -21,11 +23,12 @@ const StickerPack = require('../structures/StickerPack');
 const VoiceRegion = require('../structures/VoiceRegion');
 const Webhook = require('../structures/Webhook');
 const Widget = require('../structures/Widget');
-const { Events, InviteScopes, Status } = require('../util/Constants');
 const DataResolver = require('../util/DataResolver');
-const Intents = require('../util/Intents');
+const Events = require('../util/Events');
+const IntentsBitField = require('../util/IntentsBitField');
 const Options = require('../util/Options');
-const Permissions = require('../util/Permissions');
+const PermissionsBitField = require('../util/PermissionsBitField');
+const Status = require('../util/Status');
 const Sweepers = require('../util/Sweepers');
 
 /**
@@ -210,8 +213,9 @@ class Client extends BaseClient {
   async login(token = this.token) {
     if (!token || typeof token !== 'string') throw new Error('TOKEN_INVALID');
     this.token = token = token.replace(/^(Bot|Bearer)\s*/i, '');
+    this.rest.setToken(token);
     this.emit(
-      Events.DEBUG,
+      Events.Debug,
       `Provided token: ${token
         .split('.')
         .map((val, i) => (i > 1 ? val.replace(/./g, '*') : val))
@@ -222,7 +226,7 @@ class Client extends BaseClient {
       this.options.ws.presence = this.presence._parse(this.options.presence);
     }
 
-    this.emit(Events.DEBUG, 'Preparing to connect to the gateway...');
+    this.emit(Events.Debug, 'Preparing to connect to the gateway...');
 
     try {
       await this.ws.connect();
@@ -239,7 +243,7 @@ class Client extends BaseClient {
    * @returns {boolean}
    */
   isReady() {
-    return this.ws.status === Status.READY;
+    return this.ws.status === Status.Ready;
   }
 
   /**
@@ -252,6 +256,7 @@ class Client extends BaseClient {
     this.sweepers.destroy();
     this.ws.destroy();
     this.token = null;
+    this.rest.setToken(null);
   }
 
   /**
@@ -273,9 +278,12 @@ class Client extends BaseClient {
    */
   async fetchInvite(invite, options) {
     const code = DataResolver.resolveInviteCode(invite);
-    const data = await this.api.invites(code).get({
-      query: { with_counts: true, with_expiration: true, guild_scheduled_event_id: options?.guildScheduledEventId },
+    const query = makeURLSearchParams({
+      with_counts: true,
+      with_expiration: true,
+      guild_scheduled_event_id: options?.guildScheduledEventId,
     });
+    const data = await this.rest.get(Routes.invite(code), { query });
     return new Invite(this, data);
   }
 
@@ -290,7 +298,7 @@ class Client extends BaseClient {
    */
   async fetchGuildTemplate(template) {
     const code = DataResolver.resolveGuildTemplateCode(template);
-    const data = await this.api.guilds.templates(code).get();
+    const data = await this.rest.get(Routes.template(code));
     return new GuildTemplate(this, data);
   }
 
@@ -305,7 +313,7 @@ class Client extends BaseClient {
    *   .catch(console.error);
    */
   async fetchWebhook(id, token) {
-    const data = await this.api.webhooks(id, token).get();
+    const data = await this.rest.get(Routes.webhook(id, token));
     return new Webhook(this, { token, ...data });
   }
 
@@ -318,7 +326,7 @@ class Client extends BaseClient {
    *   .catch(console.error);
    */
   async fetchVoiceRegions() {
-    const apiRegions = await this.api.voice.regions.get();
+    const apiRegions = await this.rest.get(Routes.voiceRegions());
     const regions = new Collection();
     for (const region of apiRegions) regions.set(region.id, new VoiceRegion(region));
     return regions;
@@ -334,7 +342,7 @@ class Client extends BaseClient {
    *   .catch(console.error);
    */
   async fetchSticker(id) {
-    const data = await this.api.stickers(id).get();
+    const data = await this.rest.get(Routes.sticker(id));
     return new Sticker(this, data);
   }
 
@@ -347,7 +355,7 @@ class Client extends BaseClient {
    *   .catch(console.error);
    */
   async fetchPremiumStickerPacks() {
-    const data = await this.api('sticker-packs').get();
+    const data = await this.rest.get(Routes.nitroStickerPacks());
     return new Collection(data.sticker_packs.map(p => [p.id, new StickerPack(this, p)]));
   }
 
@@ -359,7 +367,7 @@ class Client extends BaseClient {
   async fetchGuildPreview(guild) {
     const id = this.guilds.resolveId(guild);
     if (!id) throw new TypeError('INVALID_TYPE', 'guild', 'GuildResolvable');
-    const data = await this.api.guilds(id).preview.get();
+    const data = await this.rest.get(Routes.guildPreview(id));
     return new GuildPreview(this, data);
   }
 
@@ -371,14 +379,14 @@ class Client extends BaseClient {
   async fetchGuildWidget(guild) {
     const id = this.guilds.resolveId(guild);
     if (!id) throw new TypeError('INVALID_TYPE', 'guild', 'GuildResolvable');
-    const data = await this.api.guilds(id, 'widget.json').get();
+    const data = await this.rest.get(Routes.guildWidgetJSON(id));
     return new Widget(this, data);
   }
 
   /**
    * Options for {@link Client#generateInvite}.
    * @typedef {Object} InviteGenerationOptions
-   * @property {InviteScope[]} scopes Scopes that should be requested
+   * @property {OAuth2Scopes[]} scopes Scopes that should be requested
    * @property {PermissionResolvable} [permissions] Permissions to request
    * @property {GuildResolvable} [guild] Guild to preselect
    * @property {boolean} [disableGuildSelect] Whether to disable the guild selection
@@ -390,27 +398,23 @@ class Client extends BaseClient {
    * @returns {string}
    * @example
    * const link = client.generateInvite({
-   *   scopes: ['applications.commands'],
+   *   scopes: [OAuth2Scopes.ApplicationsCommands],
    * });
    * console.log(`Generated application invite link: ${link}`);
    * @example
    * const link = client.generateInvite({
    *   permissions: [
-   *     Permissions.FLAGS.SEND_MESSAGES,
-   *     Permissions.FLAGS.MANAGE_GUILD,
-   *     Permissions.FLAGS.MENTION_EVERYONE,
+   *     PermissionFlagsBits.SendMessages,
+   *     PermissionFlagsBits.ManageGuild,
+   *     PermissionFlagsBits.MentionEveryone,
    *   ],
-   *   scopes: ['bot'],
+   *   scopes: [OAuth2Scopes.Bot],
    * });
    * console.log(`Generated bot invite link: ${link}`);
    */
   generateInvite(options = {}) {
     if (typeof options !== 'object') throw new TypeError('INVALID_TYPE', 'options', 'object', true);
     if (!this.application) throw new Error('CLIENT_NOT_READY', 'generate an invite link');
-
-    const query = new URLSearchParams({
-      client_id: this.application.id,
-    });
 
     const { scopes } = options;
     if (typeof scopes === 'undefined') {
@@ -419,22 +423,24 @@ class Client extends BaseClient {
     if (!Array.isArray(scopes)) {
       throw new TypeError('INVALID_TYPE', 'scopes', 'Array of Invite Scopes', true);
     }
-    if (!scopes.some(scope => ['bot', 'applications.commands'].includes(scope))) {
+    if (!scopes.some(scope => [OAuth2Scopes.Bot, OAuth2Scopes.ApplicationsCommands].includes(scope))) {
       throw new TypeError('INVITE_MISSING_SCOPES');
     }
-    const invalidScope = scopes.find(scope => !InviteScopes.includes(scope));
+    const validScopes = Object.values(OAuth2Scopes);
+    const invalidScope = scopes.find(scope => !validScopes.includes(scope));
     if (invalidScope) {
       throw new TypeError('INVALID_ELEMENT', 'Array', 'scopes', invalidScope);
     }
-    query.set('scope', scopes.join(' '));
+
+    const query = makeURLSearchParams({
+      client_id: this.application.id,
+      scope: scopes.join(' '),
+      disable_guild_select: options.disableGuildSelect,
+    });
 
     if (options.permissions) {
-      const permissions = Permissions.resolve(options.permissions);
-      if (permissions) query.set('permissions', permissions);
-    }
-
-    if (options.disableGuildSelect) {
-      query.set('disable_guild_select', true);
+      const permissions = PermissionsBitField.resolve(options.permissions);
+      if (permissions) query.set('permissions', permissions.toString());
     }
 
     if (options.guild) {
@@ -443,7 +449,7 @@ class Client extends BaseClient {
       query.set('guild_id', guildId);
     }
 
-    return `${this.options.http.api}${this.api.oauth2.authorize}?${query}`;
+    return `${this.options.rest.api}${Routes.oauth2Authorization()}?${query}`;
   }
 
   toJSON() {
@@ -472,7 +478,7 @@ class Client extends BaseClient {
     if (typeof options.intents === 'undefined') {
       throw new TypeError('CLIENT_MISSING_INTENTS');
     } else {
-      options.intents = Intents.resolve(options.intents);
+      options.intents = IntentsBitField.resolve(options.intents);
     }
     if (typeof options.shardCount !== 'number' || isNaN(options.shardCount) || options.shardCount < 1) {
       throw new TypeError('CLIENT_INVALID_OPTION', 'shardCount', 'a number greater than or equal to 1');
@@ -487,38 +493,14 @@ class Client extends BaseClient {
     if (typeof options.sweepers !== 'object' || options.sweepers === null) {
       throw new TypeError('CLIENT_INVALID_OPTION', 'sweepers', 'an object');
     }
-    if (typeof options.invalidRequestWarningInterval !== 'number' || isNaN(options.invalidRequestWarningInterval)) {
-      throw new TypeError('CLIENT_INVALID_OPTION', 'invalidRequestWarningInterval', 'a number');
-    }
     if (!Array.isArray(options.partials)) {
       throw new TypeError('CLIENT_INVALID_OPTION', 'partials', 'an Array');
     }
     if (typeof options.waitGuildTimeout !== 'number' || isNaN(options.waitGuildTimeout)) {
       throw new TypeError('CLIENT_INVALID_OPTION', 'waitGuildTimeout', 'a number');
     }
-    if (typeof options.restRequestTimeout !== 'number' || isNaN(options.restRequestTimeout)) {
-      throw new TypeError('CLIENT_INVALID_OPTION', 'restRequestTimeout', 'a number');
-    }
-    if (typeof options.restGlobalRateLimit !== 'number' || isNaN(options.restGlobalRateLimit)) {
-      throw new TypeError('CLIENT_INVALID_OPTION', 'restGlobalRateLimit', 'a number');
-    }
-    if (typeof options.restSweepInterval !== 'number' || isNaN(options.restSweepInterval)) {
-      throw new TypeError('CLIENT_INVALID_OPTION', 'restSweepInterval', 'a number');
-    }
-    if (typeof options.retryLimit !== 'number' || isNaN(options.retryLimit)) {
-      throw new TypeError('CLIENT_INVALID_OPTION', 'retryLimit', 'a number');
-    }
     if (typeof options.failIfNotExists !== 'boolean') {
       throw new TypeError('CLIENT_INVALID_OPTION', 'failIfNotExists', 'a boolean');
-    }
-    if (!Array.isArray(options.userAgentSuffix)) {
-      throw new TypeError('CLIENT_INVALID_OPTION', 'userAgentSuffix', 'an array of strings');
-    }
-    if (
-      typeof options.rejectOnRateLimit !== 'undefined' &&
-      !(typeof options.rejectOnRateLimit === 'function' || Array.isArray(options.rejectOnRateLimit))
-    ) {
-      throw new TypeError('CLIENT_INVALID_OPTION', 'rejectOnRateLimit', 'an array or a function');
     }
   }
 }
@@ -539,6 +521,12 @@ module.exports = Client;
  */
 
 /**
+ * Emitted for general debugging information.
+ * @event Client#debug
+ * @param {string} info The debug information
+ */
+
+/**
  * Emitted for general warnings.
  * @event Client#warn
  * @param {string} info The warning
@@ -547,4 +535,14 @@ module.exports = Client;
 /**
  * @external Collection
  * @see {@link https://discord.js.org/#/docs/collection/main/class/Collection}
+ */
+
+/**
+ * @external ImageURLOptions
+ * @see {@link https://discord.js.org/#/docs/rest/main/typedef/ImageURLOptions}
+ */
+
+/**
+ * @external BaseImageURLOptions
+ * @see {@link https://discord.js.org/#/docs/rest/main/typedef/BaseImageURLOptions}
  */

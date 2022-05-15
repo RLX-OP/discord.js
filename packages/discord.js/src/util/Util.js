@@ -2,10 +2,9 @@
 
 const { parse } = require('node:path');
 const { Collection } = require('@discordjs/collection');
-const { ChannelType } = require('discord-api-types/v9');
-const fetch = require('node-fetch');
-const { Colors, Endpoints } = require('./Constants');
-const Options = require('./Options');
+const { ChannelType, RouteBases, Routes } = require('discord-api-types/v10');
+const { fetch } = require('undici');
+const Colors = require('./Colors');
 const { Error: DiscordError, RangeError, TypeError } = require('../errors');
 const isObject = d => typeof d === 'object' && d !== null;
 
@@ -37,65 +36,25 @@ class Util extends null {
       const element = obj[prop];
       const elemIsObj = isObject(element);
       const valueOf = elemIsObj && typeof element.valueOf === 'function' ? element.valueOf() : null;
+      const hasToJSON = elemIsObj && typeof element.toJSON === 'function';
 
       // If it's a Collection, make the array of keys
       if (element instanceof Collection) out[newProp] = Array.from(element.keys());
       // If the valueOf is a Collection, use its array of keys
       else if (valueOf instanceof Collection) out[newProp] = Array.from(valueOf.keys());
-      // If it's an array, flatten each element
-      else if (Array.isArray(element)) out[newProp] = element.map(e => Util.flatten(e));
+      // If it's an array, call toJSON function on each element if present, otherwise flatten each element
+      else if (Array.isArray(element)) out[newProp] = element.map(e => e.toJSON?.() ?? Util.flatten(e));
       // If it's an object with a primitive `valueOf`, use that value
       else if (typeof valueOf !== 'object') out[newProp] = valueOf;
+      // If it's an object with a toJSON function, use the return value of it
+      else if (hasToJSON) out[newProp] = element.toJSON();
+      // If element is an object, use the flattened version of it
+      else if (typeof element === 'object') out[newProp] = Util.flatten(element);
       // If it's a primitive
       else if (!elemIsObj) out[newProp] = element;
     }
 
     return out;
-  }
-
-  /**
-   * Options for splitting a message.
-   * @typedef {Object} SplitOptions
-   * @property {number} [maxLength=2000] Maximum character length per message piece
-   * @property {string|string[]|RegExp|RegExp[]} [char='\n'] Character(s) or Regex(es) to split the message with,
-   * an array can be used to split multiple times
-   * @property {string} [prepend=''] Text to prepend to every piece except the first
-   * @property {string} [append=''] Text to append to every piece except the last
-   */
-
-  /**
-   * Splits a string into multiple chunks at a designated character that do not exceed a specific length.
-   * @param {string} text Content to split
-   * @param {SplitOptions} [options] Options controlling the behavior of the split
-   * @returns {string[]}
-   */
-  static splitMessage(text, { maxLength = 2_000, char = '\n', prepend = '', append = '' } = {}) {
-    text = Util.verifyString(text);
-    if (text.length <= maxLength) return [text];
-    let splitText = [text];
-    if (Array.isArray(char)) {
-      while (char.length > 0 && splitText.some(elem => elem.length > maxLength)) {
-        const currentChar = char.shift();
-        if (currentChar instanceof RegExp) {
-          splitText = splitText.flatMap(chunk => chunk.match(currentChar));
-        } else {
-          splitText = splitText.flatMap(chunk => chunk.split(currentChar));
-        }
-      }
-    } else {
-      splitText = text.split(char);
-    }
-    if (splitText.some(elem => elem.length > maxLength)) throw new RangeError('SPLIT_MAX_LEN');
-    const messages = [];
-    let msg = '';
-    for (const chunk of splitText) {
-      if (msg && (msg + char + chunk + append).length > maxLength) {
-        messages.push(msg + append);
-        msg = prepend;
-      }
-      msg += (msg && msg !== prepend ? char : '') + chunk;
-    }
-    return messages.concat(msg).filter(m => m);
   }
 
   /**
@@ -190,7 +149,7 @@ class Util extends null {
    * @returns {string}
    */
   static escapeInlineCode(text) {
-    return text.replace(/(?<=^|[^`])`(?=[^`]|$)/g, '\\`');
+    return text.replace(/(?<=^|[^`])``?(?=[^`]|$)/g, match => (match.length === 2 ? '\\`\\`' : '\\`'));
   }
 
   /**
@@ -269,8 +228,7 @@ class Util extends null {
    */
   static async fetchRecommendedShards(token, { guildsPerShard = 1_000, multipleOf = 1 } = {}) {
     if (!token) throw new DiscordError('TOKEN_MISSING');
-    const defaults = Options.createDefault();
-    const response = await fetch(`${defaults.http.api}/v${defaults.http.version}${Endpoints.botGateway}`, {
+    const response = await fetch(RouteBases.api + Routes.gatewayBot(), {
       method: 'GET',
       headers: { Authorization: `Bot ${token.replace(/^Bot\s*/i, '')}` },
     });
@@ -293,9 +251,9 @@ class Util extends null {
    */
   static parseEmoji(text) {
     if (text.includes('%')) text = decodeURIComponent(text);
-    if (!text.includes(':')) return { animated: false, name: text, id: null };
+    if (!text.includes(':')) return { animated: false, name: text, id: undefined };
     const match = text.match(/<?(?:(a):)?(\w{2,32}):(\d{17,19})?>?/);
-    return match && { animated: Boolean(match[1]), name: match[2], id: match[3] ?? null };
+    return match && { animated: Boolean(match[1]), name: match[2], id: match[3] };
   }
 
   /**
@@ -421,37 +379,37 @@ class Util extends null {
    * [255, 0, 255] // purple
    * ```
    * or one of the following strings:
-   * - `DEFAULT`
-   * - `WHITE`
-   * - `AQUA`
-   * - `GREEN`
-   * - `BLUE`
-   * - `YELLOW`
-   * - `PURPLE`
-   * - `LUMINOUS_VIVID_PINK`
-   * - `FUCHSIA`
-   * - `GOLD`
-   * - `ORANGE`
-   * - `RED`
-   * - `GREY`
-   * - `NAVY`
-   * - `DARK_AQUA`
-   * - `DARK_GREEN`
-   * - `DARK_BLUE`
-   * - `DARK_PURPLE`
-   * - `DARK_VIVID_PINK`
-   * - `DARK_GOLD`
-   * - `DARK_ORANGE`
-   * - `DARK_RED`
-   * - `DARK_GREY`
-   * - `DARKER_GREY`
-   * - `LIGHT_GREY`
-   * - `DARK_NAVY`
-   * - `BLURPLE`
-   * - `GREYPLE`
-   * - `DARK_BUT_NOT_BLACK`
-   * - `NOT_QUITE_BLACK`
-   * - `RANDOM`
+   * - `Default`
+   * - `White`
+   * - `Aqua`
+   * - `Green`
+   * - `Blue`
+   * - `Yellow`
+   * - `Purple`
+   * - `LuminousVividPink`
+   * - `Fuchsia`
+   * - `Gold`
+   * - `Orange`
+   * - `Red`
+   * - `Grey`
+   * - `Navy`
+   * - `DarkAqua`
+   * - `DarkGreen`
+   * - `DarkBlue`
+   * - `DarkPurple`
+   * - `DarkVividPink`
+   * - `DarkGold`
+   * - `DarkOrange`
+   * - `DarkRed`
+   * - `DarkGrey`
+   * - `DarkerGrey`
+   * - `LightGrey`
+   * - `DarkNavy`
+   * - `Blurple`
+   * - `Greyple`
+   * - `DarkButNotBlack`
+   * - `NotQuiteBlack`
+   * - `Random`
    * @typedef {string|number|number[]} ColorResolvable
    */
 
@@ -462,8 +420,8 @@ class Util extends null {
    */
   static resolveColor(color) {
     if (typeof color === 'string') {
-      if (color === 'RANDOM') return Math.floor(Math.random() * (0xffffff + 1));
-      if (color === 'DEFAULT') return 0;
+      if (color === 'Random') return Math.floor(Math.random() * (0xffffff + 1));
+      if (color === 'Default') return 0;
       color = Colors[color] ?? parseInt(color.replace('#', ''), 16);
     } else if (Array.isArray(color)) {
       color = (color[0] << 16) + (color[1] << 8) + color[2];
@@ -495,16 +453,17 @@ class Util extends null {
    * @param {number} position New position for the object
    * @param {boolean} relative Whether `position` is relative to its current position
    * @param {Collection<string, Channel|Role>} sorted A collection of the objects sorted properly
-   * @param {APIRouter} route Route to call PATCH on
+   * @param {Client} client The client to use to patch the data
+   * @param {string} route Route to call PATCH on
    * @param {string} [reason] Reason for the change
    * @returns {Promise<Channel[]|Role[]>} Updated item list, with `id` and `position` properties
    * @private
    */
-  static async setPosition(item, position, relative, sorted, route, reason) {
+  static async setPosition(item, position, relative, sorted, client, route, reason) {
     let updatedItems = [...sorted.values()];
     Util.moveElementInArray(updatedItems, item, position, relative);
     updatedItems = updatedItems.map((r, i) => ({ id: r.id, position: i }));
-    await route.patch({ data: updatedItems, reason });
+    await client.rest.patch(route, { body: updatedItems, reason });
     return updatedItems;
   }
 

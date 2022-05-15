@@ -1,8 +1,8 @@
 'use strict';
 
+const { Routes } = require('discord-api-types/v10');
 const Base = require('./Base');
 const IntegrationApplication = require('./IntegrationApplication');
-const { IntegrationExpireBehaviors } = require('../util/Constants');
 
 /**
  * The information account for an integration
@@ -52,9 +52,9 @@ class Integration extends Base {
 
     /**
      * Whether this integration is enabled
-     * @type {boolean}
+     * @type {?boolean}
      */
-    this.enabled = data.enabled;
+    this.enabled = data.enabled ?? null;
 
     if ('syncing' in data) {
       /**
@@ -156,7 +156,7 @@ class Integration extends Base {
        * The behavior of expiring subscribers
        * @type {?IntegrationExpireBehavior}
        */
-      this.expireBehavior = IntegrationExpireBehaviors[data.expire_behavior];
+      this.expireBehavior = data.expire_behavior;
     } else {
       this.expireBehavior ??= null;
     }
@@ -192,7 +192,7 @@ class Integration extends Base {
    * @param {string} [reason] Reason for deleting this integration
    */
   async delete(reason) {
-    await this.client.api.guilds(this.guild.id).integrations(this.id).delete({ reason });
+    await this.client.rest.delete(Routes.guildIntegration(this.guild.id, this.id), { reason });
     return this;
   }
 

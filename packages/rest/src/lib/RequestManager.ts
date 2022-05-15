@@ -1,15 +1,13 @@
-import Collection from '@discordjs/collection';
-import FormData from 'form-data';
-import { DiscordSnowflake } from '@sapphire/snowflake';
+import { Blob } from 'node:buffer';
 import { EventEmitter } from 'node:events';
-import { Agent } from 'node:https';
-import type { RequestInit, BodyInit } from 'node-fetch';
+import Collection from '@discordjs/collection';
+import { DiscordSnowflake } from '@sapphire/snowflake';
+import { FormData, type RequestInit, type BodyInit, type Dispatcher, Agent } from 'undici';
+import type { RESTOptions, RestEvents, RequestOptions } from './REST';
 import type { IHandler } from './handlers/IHandler';
 import { SequentialHandler } from './handlers/SequentialHandler';
-import type { RESTOptions, RestEvents } from './REST';
 import { DefaultRestOptions, DefaultUserAgent, RESTEvents } from './utils/constants';
-
-let agent: Agent | null = null;
+import { resolveBody } from './utils/utils';
 
 /**
  * Represents a file to be added to the request
@@ -18,7 +16,7 @@ export interface RawFile {
 	/**
 	 * The name of the file
 	 */
-	fileName: string;
+	name: string;
 	/**
 	 * An explicit key to use for key of the formdata field for this file.
 	 * When not provided, the index of the file in the files array is used in the form `files[${index}]`.
@@ -28,7 +26,7 @@ export interface RawFile {
 	/**
 	 * The actual data for the file
 	 */
-	fileData: string | number | boolean | Buffer;
+	data: string | number | boolean | Buffer;
 }
 
 /**
@@ -54,6 +52,10 @@ export interface RequestData {
 	 * If providing as BodyInit, set `passThroughBody: true`
 	 */
 	body?: BodyInit | unknown;
+	/**
+	 * The {@link https://undici.nodejs.org/#/docs/api/Agent Agent} to use for the request.
+	 */
+	dispatcher?: Agent;
 	/**
 	 * Files to be attached to this request
 	 */
@@ -95,11 +97,11 @@ export interface RequestHeaders {
  * Possible API methods to be used when doing requests
  */
 export const enum RequestMethod {
-	Delete = 'delete',
-	Get = 'get',
-	Patch = 'patch',
-	Post = 'post',
-	Put = 'put',
+	Delete = 'DELETE',
+	Get = 'GET',
+	Patch = 'PATCH',
+	Post = 'POST',
+	Put = 'PUT',
 }
 
 export type RouteLike = `/${string}`;
@@ -113,6 +115,8 @@ export interface InternalRequest extends RequestData {
 	method: RequestMethod;
 	fullRoute: RouteLike;
 }
+
+export type HandlerRequestData = Pick<InternalRequest, 'files' | 'body' | 'auth'>;
 
 /**
  * Parsed route data for an endpoint
@@ -157,6 +161,11 @@ export interface RequestManager {
  */
 export class RequestManager extends EventEmitter {
 	/**
+	 * The {@link https://undici.nodejs.org/#/docs/api/Agent Agent} for all requests
+	 * performed by this manager.
+	 */
+	public agent: Dispatcher | null = null;
+	/**
 	 * The number of requests remaining in the global bucket
 	 */
 	public globalRemaining: number;
@@ -194,6 +203,7 @@ export class RequestManager extends EventEmitter {
 		this.options = { ...DefaultRestOptions, ...options };
 		this.options.offset = Math.max(0, this.options.offset);
 		this.globalRemaining = this.options.globalRequestsPerSecond;
+		this.agent = options.agent ?? null;
 
 		// Start sweepers
 		this.setupSweepers();
@@ -262,6 +272,15 @@ export class RequestManager extends EventEmitter {
 	}
 
 	/**
+	 * Sets the default agent to use for requests performed by this manager
+	 * @param agent The agent to use
+	 */
+	public setAgent(agent: Dispatcher) {
+		this.agent = agent;
+		return this;
+	}
+
+	/**
 	 * Sets the authorization token that should be used for requests
 	 * @param token The authorization token to use
 	 */
@@ -289,11 +308,15 @@ export class RequestManager extends EventEmitter {
 			this.handlers.get(`${hash.value}:${routeId.majorParameter}`) ??
 			this.createHandler(hash.value, routeId.majorParameter);
 
-		// Resolve the request into usable fetch/node-fetch options
-		const { url, fetchOptions } = this.resolveRequest(request);
+		// Resolve the request into usable fetch options
+		const { url, fetchOptions } = await this.resolveRequest(request);
 
 		// Queue the request
-		return handler.queueRequest(routeId, url, fetchOptions, { body: request.body, files: request.files });
+		return handler.queueRequest(routeId, url, fetchOptions, {
+			body: request.body,
+			files: request.files,
+			auth: request.auth !== false,
+		});
 	}
 
 	/**
@@ -315,16 +338,17 @@ export class RequestManager extends EventEmitter {
 	 * Formats the request data to a usable format for fetch
 	 * @param request The request data
 	 */
-	private resolveRequest(request: InternalRequest): { url: string; fetchOptions: RequestInit } {
+	private async resolveRequest(request: InternalRequest): Promise<{ url: string; fetchOptions: RequestOptions }> {
 		const { options } = this;
-
-		agent ??= new Agent({ ...options.agent, keepAlive: true });
 
 		let query = '';
 
 		// If a query option is passed, use it
 		if (request.query) {
-			query = `?${request.query.toString()}`;
+			const resolvedQuery = request.query.toString();
+			if (resolvedQuery !== '') {
+				query = `?${resolvedQuery}`;
+			}
 		}
 
 		// Create the required headers
@@ -340,7 +364,7 @@ export class RequestManager extends EventEmitter {
 				throw new Error('Expected token to be set for this request, but none was present');
 			}
 
-			headers.Authorization = `${request.authPrefix ?? 'Bot'} ${this.#token}`;
+			headers.Authorization = `${request.authPrefix ?? this.options.authPrefix} ${this.#token}`;
 		}
 
 		// If a reason was set, set it's appropriate header
@@ -361,7 +385,18 @@ export class RequestManager extends EventEmitter {
 
 			// Attach all files to the request
 			for (const [index, file] of request.files.entries()) {
-				formData.append(file.key ?? `files[${index}]`, file.fileData, file.fileName);
+				const fileKey = file.key ?? `files[${index}]`;
+
+				// https://developer.mozilla.org/en-US/docs/Web/API/FormData/append#parameters
+				// FormData.append only accepts a string or Blob.
+				// https://developer.mozilla.org/en-US/docs/Web/API/Blob/Blob#parameters
+				// The Blob constructor accepts TypedArray/ArrayBuffer, strings, and Blobs.
+				if (Buffer.isBuffer(file.data) || typeof file.data === 'string') {
+					formData.append(fileKey, new Blob([file.data]), file.name);
+				} else {
+					// eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+					formData.append(fileKey, new Blob([`${file.data}`]), file.name);
+				}
 			}
 
 			// If a JSON body was added as well, attach it to the form data, using payload_json unless otherwise specified
@@ -378,8 +413,6 @@ export class RequestManager extends EventEmitter {
 
 			// Set the final body to the form data
 			finalBody = formData;
-			// Set the additional headers to the form data ones
-			additionalHeaders = formData.getHeaders();
 
 			// eslint-disable-next-line no-eq-null
 		} else if (request.body != null) {
@@ -393,13 +426,20 @@ export class RequestManager extends EventEmitter {
 			}
 		}
 
-		const fetchOptions = {
-			agent,
-			body: finalBody,
+		finalBody = await resolveBody(finalBody);
+
+		const fetchOptions: RequestOptions = {
 			// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
 			headers: { ...(request.headers ?? {}), ...additionalHeaders, ...headers } as Record<string, string>,
-			method: request.method,
+			method: request.method.toUpperCase() as Dispatcher.HttpMethod,
 		};
+
+		if (finalBody !== undefined) {
+			fetchOptions.body = finalBody as Exclude<RequestOptions['body'], undefined>;
+		}
+
+		// Prioritize setting an agent per request, use the agent for this instance otherwise.
+		fetchOptions.dispatcher = request.dispatcher ?? this.agent ?? undefined!;
 
 		return { url, fetchOptions };
 	}
@@ -442,8 +482,8 @@ export class RequestManager extends EventEmitter {
 		// https://github.com/discord/discord-api-docs/issues/1295
 		if (method === RequestMethod.Delete && baseRoute === '/channels/:id/messages/:id') {
 			const id = /\d{16,19}$/.exec(endpoint)![0];
-			const snowflake = DiscordSnowflake.deconstruct(id);
-			if (Date.now() - Number(snowflake.timestamp) > 1000 * 60 * 60 * 24 * 14) {
+			const timestamp = DiscordSnowflake.timestampFrom(id);
+			if (Date.now() - timestamp > 1000 * 60 * 60 * 24 * 14) {
 				exceptions += '/Delete Old Message';
 			}
 		}

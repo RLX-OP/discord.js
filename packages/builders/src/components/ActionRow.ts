@@ -1,21 +1,36 @@
-import { APIActionRowComponent, ComponentType } from 'discord-api-types/v9';
-import type { ButtonComponent, SelectMenuComponent } from '..';
-import type { Component } from './Component';
-import { createComponent } from './Components';
+import {
+	type APIActionRowComponent,
+	ComponentType,
+	APIMessageActionRowComponent,
+	APIModalActionRowComponent,
+	APIActionRowComponentTypes,
+} from 'discord-api-types/v10';
+import { ComponentBuilder } from './Component';
+import { createComponentBuilder } from './Components';
+import type { ButtonBuilder, SelectMenuBuilder, TextInputBuilder } from '..';
 
-export type ActionRowComponent = ButtonComponent | SelectMenuComponent;
-
-// TODO: Add valid form component types
+export type MessageComponentBuilder =
+	| MessageActionRowComponentBuilder
+	| ActionRowBuilder<MessageActionRowComponentBuilder>;
+export type ModalComponentBuilder = ModalActionRowComponentBuilder | ActionRowBuilder<ModalActionRowComponentBuilder>;
+export type MessageActionRowComponentBuilder = ButtonBuilder | SelectMenuBuilder;
+export type ModalActionRowComponentBuilder = TextInputBuilder;
+export type AnyComponentBuilder = MessageActionRowComponentBuilder | ModalActionRowComponentBuilder;
 
 /**
  * Represents an action row component
  */
-export class ActionRow<T extends ActionRowComponent> implements Component {
-	public readonly components: T[] = [];
-	public readonly type = ComponentType.ActionRow;
+export class ActionRowBuilder<T extends AnyComponentBuilder> extends ComponentBuilder<
+	APIActionRowComponent<APIMessageActionRowComponent | APIModalActionRowComponent>
+> {
+	/**
+	 * The components within this action row
+	 */
+	public readonly components: T[];
 
-	public constructor(data?: APIActionRowComponent) {
-		this.components = (data?.components.map(createComponent) ?? []) as T[];
+	public constructor({ components, ...data }: Partial<APIActionRowComponent<APIActionRowComponentTypes>> = {}) {
+		super({ type: ComponentType.ActionRow, ...data });
+		this.components = (components?.map((c) => createComponentBuilder(c)) ?? []) as T[];
 	}
 
 	/**
@@ -23,7 +38,7 @@ export class ActionRow<T extends ActionRowComponent> implements Component {
 	 * @param components The components to add to this action row.
 	 * @returns
 	 */
-	public addComponents(...components: T[]) {
+	public addComponents(components: T[]) {
 		this.components.push(...components);
 		return this;
 	}
@@ -33,14 +48,15 @@ export class ActionRow<T extends ActionRowComponent> implements Component {
 	 * @param components The components to set this row to
 	 */
 	public setComponents(components: T[]) {
-		Reflect.set(this, 'components', [...components]);
+		this.components.splice(0, this.components.length, ...components);
 		return this;
 	}
 
-	public toJSON(): APIActionRowComponent {
+	public toJSON(): APIActionRowComponent<ReturnType<T['toJSON']>> {
+		// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
 		return {
-			...this,
+			...this.data,
 			components: this.components.map((component) => component.toJSON()),
-		};
+		} as APIActionRowComponent<ReturnType<T['toJSON']>>;
 	}
 }

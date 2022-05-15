@@ -3,11 +3,11 @@ import {
 	APIButtonComponentWithURL,
 	ButtonStyle,
 	ComponentType,
-} from 'discord-api-types/v9';
+} from 'discord-api-types/v10';
 import { buttonLabelValidator, buttonStyleValidator } from '../../src/components/Assertions';
-import { ButtonComponent } from '../../src/components/Button';
+import { ButtonBuilder } from '../../src/components/button/Button';
 
-const buttonComponent = () => new ButtonComponent();
+const buttonComponent = () => new ButtonBuilder();
 
 const longStr =
 	'looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong';
@@ -119,7 +119,7 @@ describe('Button Components', () => {
 				disabled: true,
 			};
 
-			expect(new ButtonComponent(interactionData).toJSON()).toEqual(interactionData);
+			expect(new ButtonBuilder(interactionData).toJSON()).toEqual(interactionData);
 
 			expect(
 				buttonComponent()
@@ -138,7 +138,7 @@ describe('Button Components', () => {
 				url: 'https://google.com',
 			};
 
-			expect(new ButtonComponent(linkData).toJSON()).toEqual(linkData);
+			expect(new ButtonBuilder(linkData).toJSON()).toEqual(linkData);
 
 			expect(buttonComponent().setLabel(linkData.label).setDisabled(true).setURL(linkData.url));
 		});

@@ -1,12 +1,11 @@
 'use strict';
 
-const { ChannelType } = require('discord-api-types/v9');
+const { ChannelType, PermissionFlagsBits, Routes } = require('discord-api-types/v10');
 const { Channel } = require('./Channel');
 const TextBasedChannel = require('./interfaces/TextBasedChannel');
 const { RangeError } = require('../errors');
 const MessageManager = require('../managers/MessageManager');
 const ThreadMemberManager = require('../managers/ThreadMemberManager');
-const Permissions = require('../util/Permissions');
 
 /**
  * Represents a thread channel on Discord.
@@ -101,6 +100,11 @@ class ThreadChannel extends Channel {
        * @type {?number}
        */
       this.archiveTimestamp = Date.parse(data.thread_metadata.archive_timestamp);
+
+      if ('create_timestamp' in data.thread_metadata) {
+        // Note: this is needed because we can't assign directly to getters
+        this._createdTimestamp = Date.parse(data.thread_metadata.create_timestamp);
+      }
     } else {
       this.locked ??= null;
       this.archived ??= null;
@@ -108,6 +112,8 @@ class ThreadChannel extends Channel {
       this.archiveTimestamp ??= null;
       this.invitable ??= null;
     }
+
+    this._createdTimestamp ??= this.type === ChannelType.GuildPrivateThread ? super.createdTimestamp : null;
 
     if ('owner_id' in data) {
       /**
@@ -178,6 +184,16 @@ class ThreadChannel extends Channel {
   }
 
   /**
+   * The timestamp when this thread was created. This isn't available for threads
+   * created before 2022-01-09
+   * @type {?number}
+   * @readonly
+   */
+  get createdTimestamp() {
+    return this._createdTimestamp;
+  }
+
+  /**
    * A collection of associated guild member objects of this thread's members
    * @type {Collection<Snowflake, GuildMember>}
    * @readonly
@@ -194,6 +210,15 @@ class ThreadChannel extends Channel {
    */
   get archivedAt() {
     return this.archiveTimestamp && new Date(this.archiveTimestamp);
+  }
+
+  /**
+   * The time the thread was created at
+   * @type {?Date}
+   * @readonly
+   */
+  get createdAt() {
+    return this.createdTimestamp && new Date(this.createdTimestamp);
   }
 
   /**
@@ -228,7 +253,7 @@ class ThreadChannel extends Channel {
    * account.
    * @param {GuildMemberResolvable|RoleResolvable} memberOrRole The member or role to obtain the overall permissions for
    * @param {boolean} [checkAdmin=true] Whether having `ADMINISTRATOR` will return all permissions
-   * @returns {?Readonly<Permissions>}
+   * @returns {?Readonly<PermissionsBitField>}
    */
   permissionsFor(memberOrRole, checkAdmin) {
     return this.parent?.permissionsFor(memberOrRole, checkAdmin) ?? null;
@@ -272,7 +297,7 @@ class ThreadChannel extends Channel {
    * @property {number} [rateLimitPerUser] The rate limit per user (slowmode) for the thread in seconds
    * @property {boolean} [locked] Whether the thread is locked
    * @property {boolean} [invitable] Whether non-moderators can add other non-moderators to a thread
-   * <info>Can only be edited on `GUILD_PRIVATE_THREAD`</info>
+   * <info>Can only be edited on {@link ChannelType.GuildPrivateThread}</info>
    */
 
   /**
@@ -287,20 +312,11 @@ class ThreadChannel extends Channel {
    *   .catch(console.error);
    */
   async edit(data, reason) {
-    let autoArchiveDuration = data.autoArchiveDuration;
-    if (data.autoArchiveDuration === 'MAX') {
-      autoArchiveDuration = 1440;
-      if (this.guild.features.includes('SEVEN_DAY_THREAD_ARCHIVE')) {
-        autoArchiveDuration = 10080;
-      } else if (this.guild.features.includes('THREE_DAY_THREAD_ARCHIVE')) {
-        autoArchiveDuration = 4320;
-      }
-    }
-    const newData = await this.client.api.channels(this.id).patch({
-      data: {
+    const newData = await this.client.rest.patch(Routes.channel(this.id), {
+      body: {
         name: (data.name ?? this.name).trim(),
         archived: data.archived,
-        auto_archive_duration: autoArchiveDuration,
+        auto_archive_duration: data.autoArchiveDuration,
         rate_limit_per_user: data.rateLimitPerUser,
         locked: data.locked,
         invitable: this.type === ChannelType.GuildPrivateThread ? data.invitable : undefined,
@@ -431,8 +447,8 @@ class ThreadChannel extends Channel {
       !this.joined &&
       this.permissionsFor(this.client.user)?.has(
         this.type === ChannelType.GuildPrivateThread
-          ? Permissions.FLAGS.MANAGE_THREADS
-          : Permissions.FLAGS.VIEW_CHANNEL,
+          ? PermissionFlagsBits.ManageThreads
+          : PermissionFlagsBits.ViewChannel,
         false,
       )
     );
@@ -447,11 +463,11 @@ class ThreadChannel extends Channel {
     const permissions = this.permissionsFor(this.client.user);
     if (!permissions) return false;
     // This flag allows managing even if timed out
-    if (permissions.has(Permissions.FLAGS.ADMINISTRATOR, false)) return true;
+    if (permissions.has(PermissionFlagsBits.Administrator, false)) return true;
 
     return (
-      this.guild.me.communicationDisabledUntilTimestamp < Date.now() &&
-      permissions.has(Permissions.FLAGS.MANAGE_THREADS, false)
+      this.guild.members.me.communicationDisabledUntilTimestamp < Date.now() &&
+      permissions.has(PermissionFlagsBits.ManageThreads, false)
     );
   }
 
@@ -464,7 +480,7 @@ class ThreadChannel extends Channel {
     if (this.client.user.id === this.guild.ownerId) return true;
     const permissions = this.permissionsFor(this.client.user);
     if (!permissions) return false;
-    return permissions.has(Permissions.FLAGS.VIEW_CHANNEL, false);
+    return permissions.has(PermissionFlagsBits.ViewChannel, false);
   }
 
   /**
@@ -476,13 +492,13 @@ class ThreadChannel extends Channel {
     const permissions = this.permissionsFor(this.client.user);
     if (!permissions) return false;
     // This flag allows sending even if timed out
-    if (permissions.has(Permissions.FLAGS.ADMINISTRATOR, false)) return true;
+    if (permissions.has(PermissionFlagsBits.Administrator, false)) return true;
 
     return (
       !(this.archived && this.locked && !this.manageable) &&
       (this.type !== ChannelType.GuildPrivateThread || this.joined || this.manageable) &&
-      permissions.has(Permissions.FLAGS.SEND_MESSAGES_IN_THREADS, false) &&
-      this.guild.me.communicationDisabledUntilTimestamp < Date.now()
+      permissions.has(PermissionFlagsBits.SendMessagesInThreads, false) &&
+      this.guild.members.me.communicationDisabledUntilTimestamp < Date.now()
     );
   }
 
@@ -492,7 +508,15 @@ class ThreadChannel extends Channel {
    * @readonly
    */
   get unarchivable() {
-    return this.archived && (this.locked ? this.manageable : this.sendable);
+    return this.archived && this.sendable && (!this.locked || this.manageable);
+  }
+
+  /**
+   * Whether this thread is a private thread
+   * @returns {boolean}
+   */
+  isPrivate() {
+    return this.type === ChannelType.GuildPrivateThread;
   }
 
   /**
@@ -506,7 +530,7 @@ class ThreadChannel extends Channel {
    *   .catch(console.error);
    */
   async delete(reason) {
-    await this.client.api.channels(this.id).delete({ reason });
+    await this.guild.channels.delete(this.id, reason);
     return this;
   }
 

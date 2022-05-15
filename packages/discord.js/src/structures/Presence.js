@@ -2,14 +2,14 @@
 
 const Base = require('./Base');
 const { Emoji } = require('./Emoji');
-const ActivityFlags = require('../util/ActivityFlags');
+const ActivityFlagsBitField = require('../util/ActivityFlagsBitField');
 const Util = require('../util/Util');
 
 /**
  * Activity sent in a message.
  * @typedef {Object} MessageActivity
  * @property {string} [partyId] Id of the party represented in activity
- * @property {number} [type] Type of activity sent
+ * @property {MessageActivityType} type Type of activity sent
  */
 
 /**
@@ -137,25 +137,11 @@ class Presence extends Base {
 }
 
 /**
- * The platform of this activity:
- * * **`desktop`**
- * * **`samsung`** - playing on Samsung Galaxy
- * * **`xbox`** - playing on Xbox Live
- * @typedef {string} ActivityPlatform
- */
-
-/**
  * Represents an activity that is part of a user's presence.
  */
 class Activity {
   constructor(presence, data) {
     Object.defineProperty(this, 'presence', { value: presence });
-
-    /**
-     * The activity's id
-     * @type {string}
-     */
-    this.id = data.id;
 
     /**
      * The activity's name
@@ -212,18 +198,6 @@ class Activity {
       : null;
 
     /**
-     * The Spotify song's id
-     * @type {?string}
-     */
-    this.syncId = data.sync_id ?? null;
-
-    /**
-     * The platform the game is being played on
-     * @type {?ActivityPlatform}
-     */
-    this.platform = data.platform ?? null;
-
-    /**
      * Represents a party of an activity
      * @typedef {Object} ActivityParty
      * @property {?string} id The party's id
@@ -244,21 +218,15 @@ class Activity {
 
     /**
      * Flags that describe the activity
-     * @type {Readonly<ActivityFlags>}
+     * @type {Readonly<ActivityFlagsBitField>}
      */
-    this.flags = new ActivityFlags(data.flags).freeze();
+    this.flags = new ActivityFlagsBitField(data.flags).freeze();
 
     /**
      * Emoji for a custom activity
      * @type {?Emoji}
      */
     this.emoji = data.emoji ? new Emoji(presence.client, data.emoji) : null;
-
-    /**
-     * The game's or Spotify session's id
-     * @type {?string}
-     */
-    this.sessionId = data.session_id ?? null;
 
     /**
      * The labels of the buttons of this rich presence
@@ -361,7 +329,7 @@ class RichPresenceAssets {
       }
     }
 
-    return this.activity.presence.client.rest.cdn.AppAsset(this.activity.applicationId, this.smallImage, options);
+    return this.activity.presence.client.rest.cdn.appAsset(this.activity.applicationId, this.smallImage, options);
   }
 
   /**
@@ -376,18 +344,12 @@ class RichPresenceAssets {
       switch (platform) {
         case 'mp':
           return `https://media.discordapp.net/${id}`;
-        case 'spotify':
-          return `https://i.scdn.co/image/${id}`;
-        case 'youtube':
-          return `https://i.ytimg.com/vi/${id}/hqdefault_live.jpg`;
-        case 'twitch':
-          return `https://static-cdn.jtvnw.net/previews-ttv/live_user_${id}.png`;
         default:
           return null;
       }
     }
 
-    return this.activity.presence.client.rest.cdn.AppAsset(this.activity.applicationId, this.largeImage, options);
+    return this.activity.presence.client.rest.cdn.appAsset(this.activity.applicationId, this.largeImage, options);
   }
 }
 
