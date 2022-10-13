@@ -1,5 +1,6 @@
 import { PermissionFlagsBits } from 'discord-api-types/v10';
-import { ContextMenuCommandAssertions, ContextMenuCommandBuilder } from '../../src/index';
+import { describe, test, expect } from 'vitest';
+import { ContextMenuCommandAssertions, ContextMenuCommandBuilder } from '../../src/index.js';
 
 const getBuilder = () => new ContextMenuCommandBuilder();
 
@@ -85,6 +86,10 @@ describe('Context Menu Commands', () => {
 			test('GIVEN valid builder with defaultPermission false THEN does not throw error', () => {
 				expect(() => getBuilder().setName('foo').setDefaultPermission(false)).not.toThrowError();
 			});
+
+			test('GIVEN valid builder with dmPermission false THEN does not throw error', () => {
+				expect(() => getBuilder().setName('foo').setDMPermission(false)).not.toThrowError();
+			});
 		});
 
 		describe('Context menu command localizations', () => {
@@ -100,9 +105,9 @@ describe('Context Menu Commands', () => {
 			});
 
 			test('GIVEN invalid name localizations THEN does throw error', () => {
-				// @ts-expect-error
+				// @ts-expect-error: Invalid localization
 				expect(() => getBuilder().setNameLocalization('en-U', 'foobar')).toThrowError();
-				// @ts-expect-error
+				// @ts-expect-error: Invalid localization
 				expect(() => getBuilder().setNameLocalizations({ 'en-U': 'foobar' })).toThrowError();
 			});
 

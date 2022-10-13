@@ -1,4 +1,5 @@
-import { APITextInputComponent, ComponentType, TextInputStyle } from 'discord-api-types/v10';
+import { ComponentType, TextInputStyle, type APITextInputComponent } from 'discord-api-types/v10';
+import { describe, test, expect } from 'vitest';
 import {
 	labelValidator,
 	maxLengthValidator,
@@ -6,10 +7,10 @@ import {
 	placeholderValidator,
 	valueValidator,
 	textInputStyleValidator,
-} from '../../src/components/textInput/Assertions';
-import { TextInputBuilder } from '../../src/components/textInput/TextInput';
+} from '../../src/components/textInput/Assertions.js';
+import { TextInputBuilder } from '../../src/components/textInput/TextInput.js';
 
-const superLongStr = 'a'.repeat(5000);
+const superLongStr = 'a'.repeat(5_000);
 
 const textInputComponent = () => new TextInputBuilder();
 
@@ -45,8 +46,8 @@ describe('Text Input Components', () => {
 			expect(() => maxLengthValidator.parse(10)).not.toThrowError();
 		});
 
-		test('GIVEN invalid min length THEN validator does throw', () => {
-			expect(() => maxLengthValidator.parse(4001)).toThrowError();
+		test('GIVEN invalid min length THEN validator does throw 2', () => {
+			expect(() => maxLengthValidator.parse(4_001)).toThrowError();
 		});
 
 		test('GIVEN valid value THEN validator does not throw', () => {
@@ -61,7 +62,7 @@ describe('Text Input Components', () => {
 			expect(() => placeholderValidator.parse('foobar')).not.toThrowError();
 		});
 
-		test('GIVEN invalid value THEN validator does throw', () => {
+		test('GIVEN invalid value THEN validator does throw 2', () => {
 			expect(() => placeholderValidator.parse(superLongStr)).toThrowError();
 		});
 
@@ -80,6 +81,12 @@ describe('Text Input Components', () => {
 					.setRequired(true)
 					.setStyle(TextInputStyle.Paragraph)
 					.toJSON();
+			}).not.toThrowError();
+
+			expect(() => {
+				// Issue #8107
+				// @ts-expect-error: Shapeshift maps the enum key to the value when parsing
+				textInputComponent().setCustomId('Custom').setLabel('Guess').setStyle('Short').toJSON();
 			}).not.toThrowError();
 		});
 	});
@@ -114,10 +121,10 @@ describe('Text Input Components', () => {
 			textInputComponent()
 				.setCustomId(textInputData.custom_id)
 				.setLabel(textInputData.label)
-				.setPlaceholder(textInputData.placeholder)
-				.setMaxLength(textInputData.max_length)
-				.setMinLength(textInputData.min_length)
-				.setValue(textInputData.value)
+				.setPlaceholder(textInputData.placeholder!)
+				.setMaxLength(textInputData.max_length!)
+				.setMinLength(textInputData.min_length!)
+				.setValue(textInputData.value!)
 				.setRequired(textInputData.required)
 				.setStyle(textInputData.style)
 				.toJSON(),

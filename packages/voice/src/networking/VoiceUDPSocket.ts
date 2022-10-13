@@ -1,7 +1,7 @@
-import { createSocket, Socket } from 'node:dgram';
+import { Buffer } from 'node:buffer';
+import { createSocket, type Socket } from 'node:dgram';
+import { EventEmitter } from 'node:events';
 import { isIPv4 } from 'node:net';
-import { TypedEmitter } from 'tiny-typed-emitter';
-import type { Awaited } from '../util/util';
 
 /**
  * Stores an IP address and port. Used to store socket details for the local client as well as
@@ -13,15 +13,8 @@ export interface SocketConfig {
 }
 
 interface KeepAlive {
-	value: number;
 	timestamp: number;
-}
-
-export interface VoiceUDPSocketEvents {
-	error: (error: Error) => Awaited<void>;
-	close: () => Awaited<void>;
-	debug: (message: string) => Awaited<void>;
-	message: (message: Buffer) => Awaited<void>;
+	value: number;
 }
 
 /**
@@ -32,7 +25,7 @@ export interface VoiceUDPSocketEvents {
 export function parseLocalPacket(message: Buffer): SocketConfig {
 	const packet = Buffer.from(message);
 
-	const ip = packet.slice(8, packet.indexOf(0, 8)).toString('utf-8');
+	const ip = packet.slice(8, packet.indexOf(0, 8)).toString('utf8');
 
 	if (!isIPv4(ip)) {
 		throw new Error('Malformed IP address');
@@ -58,10 +51,17 @@ const KEEP_ALIVE_LIMIT = 12;
  */
 const MAX_COUNTER_VALUE = 2 ** 32 - 1;
 
+export interface VoiceUDPSocket extends EventEmitter {
+	on(event: 'error', listener: (error: Error) => void): this;
+	on(event: 'close', listener: () => void): this;
+	on(event: 'debug', listener: (message: string) => void): this;
+	on(event: 'message', listener: (message: Buffer) => void): this;
+}
+
 /**
  * Manages the UDP networking for a voice connection.
  */
-export class VoiceUDPSocket extends TypedEmitter<VoiceUDPSocketEvents> {
+export class VoiceUDPSocket extends EventEmitter {
 	/**
 	 * The underlying network Socket for the VoiceUDPSocket.
 	 */
@@ -100,7 +100,7 @@ export class VoiceUDPSocket extends TypedEmitter<VoiceUDPSocketEvents> {
 	/**
 	 * The debug logger function, if debugging is enabled.
 	 */
-	private readonly debug: null | ((message: string) => void);
+	private readonly debug: ((message: string) => void) | null;
 
 	/**
 	 * Creates a new VoiceUDPSocket.
@@ -125,7 +125,7 @@ export class VoiceUDPSocket extends TypedEmitter<VoiceUDPSocketEvents> {
 	/**
 	 * Called when a message is received on the UDP socket.
 	 *
-	 * @param buffer The received buffer
+	 * @param buffer - The received buffer
 	 */
 	private onMessage(buffer: Buffer): void {
 		// Handle keep alive message
@@ -133,10 +133,11 @@ export class VoiceUDPSocket extends TypedEmitter<VoiceUDPSocketEvents> {
 			const counter = buffer.readUInt32LE(0);
 			const index = this.keepAlives.findIndex(({ value }) => value === counter);
 			if (index === -1) return;
-			this.ping = Date.now() - this.keepAlives[index].timestamp;
+			this.ping = Date.now() - this.keepAlives[index]!.timestamp;
 			// Delete all keep alives up to and including the received one
 			this.keepAlives.splice(0, index);
 		}
+
 		// Propagate the message
 		this.emit('message', buffer);
 	}
@@ -169,7 +170,7 @@ export class VoiceUDPSocket extends TypedEmitter<VoiceUDPSocketEvents> {
 	 * @param buffer - The buffer to send
 	 */
 	public send(buffer: Buffer) {
-		return this.socket.send(buffer, this.remote.port, this.remote.ip);
+		this.socket.send(buffer, this.remote.port, this.remote.ip);
 	}
 
 	/**
@@ -179,6 +180,7 @@ export class VoiceUDPSocket extends TypedEmitter<VoiceUDPSocketEvents> {
 		try {
 			this.socket.close();
 		} catch {}
+
 		clearInterval(this.keepAliveInterval);
 	}
 
@@ -187,7 +189,7 @@ export class VoiceUDPSocket extends TypedEmitter<VoiceUDPSocketEvents> {
 	 *
 	 * @param ssrc - The SSRC received from Discord
 	 */
-	public performIPDiscovery(ssrc: number): Promise<SocketConfig> {
+	public async performIPDiscovery(ssrc: number): Promise<SocketConfig> {
 		return new Promise((resolve, reject) => {
 			const listener = (message: Buffer) => {
 				try {

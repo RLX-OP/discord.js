@@ -2,8 +2,8 @@
 
 const GuildChannel = require('./GuildChannel');
 const TextBasedChannel = require('./interfaces/TextBasedChannel');
+const GuildTextThreadManager = require('../managers/GuildTextThreadManager');
 const MessageManager = require('../managers/MessageManager');
-const ThreadManager = require('../managers/ThreadManager');
 
 /**
  * Represents a text-based guild channel on Discord.
@@ -22,9 +22,9 @@ class BaseGuildTextChannel extends GuildChannel {
 
     /**
      * A manager of the threads belonging to this channel
-     * @type {ThreadManager}
+     * @type {GuildTextThreadManager}
      */
-    this.threads = new ThreadManager(this);
+    this.threads = new GuildTextThreadManager(this);
 
     /**
      * If the guild considers this channel NSFW
@@ -69,7 +69,7 @@ class BaseGuildTextChannel extends GuildChannel {
     if ('default_auto_archive_duration' in data) {
       /**
        * The default auto archive duration for newly created threads in this channel
-       * @type {?number}
+       * @type {?ThreadAutoArchiveDuration}
        */
       this.defaultAutoArchiveDuration = data.default_auto_archive_duration;
     }
@@ -86,27 +86,18 @@ class BaseGuildTextChannel extends GuildChannel {
    * @returns {Promise<TextChannel>}
    */
   setDefaultAutoArchiveDuration(defaultAutoArchiveDuration, reason) {
-    return this.edit({ defaultAutoArchiveDuration }, reason);
+    return this.edit({ defaultAutoArchiveDuration, reason });
   }
 
   /**
-   * Sets whether this channel is flagged as NSFW.
-   * @param {boolean} [nsfw=true] Whether the channel should be considered NSFW
-   * @param {string} [reason] Reason for changing the channel's NSFW flag
-   * @returns {Promise<TextChannel>}
-   */
-  setNSFW(nsfw = true, reason) {
-    return this.edit({ nsfw }, reason);
-  }
-
-  /**
-   * Sets the type of this channel (only conversion between text and news is supported)
-   * @param {string} type The new channel type
+   * Sets the type of this channel.
+   * <info>Only conversion between {@link TextChannel} and {@link NewsChannel} is supported.</info>
+   * @param {ChannelType.GuildText|ChannelType.GuildAnnouncement} type The new channel type
    * @param {string} [reason] Reason for changing the channel's type
    * @returns {Promise<GuildChannel>}
    */
   setType(type, reason) {
-    return this.edit({ type }, reason);
+    return this.edit({ type, reason });
   }
 
   /**
@@ -121,7 +112,7 @@ class BaseGuildTextChannel extends GuildChannel {
    *   .catch(console.error);
    */
   setTopic(topic, reason) {
-    return this.edit({ topic }, reason);
+    return this.edit({ topic, reason });
   }
 
   /**
@@ -186,6 +177,8 @@ class BaseGuildTextChannel extends GuildChannel {
   bulkDelete() {}
   fetchWebhooks() {}
   createWebhook() {}
+  setRateLimitPerUser() {}
+  setNSFW() {}
 }
 
 TextBasedChannel.applyToClass(BaseGuildTextChannel, true);

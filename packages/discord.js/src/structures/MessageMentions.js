@@ -1,39 +1,60 @@
 'use strict';
 
 const { Collection } = require('@discordjs/collection');
-const Util = require('../util/Util');
+const { FormattingPatterns } = require('discord-api-types/v10');
+const { flatten } = require('../util/Util');
 
 /**
  * Keeps track of mentions in a {@link Message}.
  */
 class MessageMentions {
   /**
-   * Regular expression that globally matches `@everyone` and `@here`
+   * A regular expression that matches `@everyone` and `@here`.
+   * The `mention` group property is present on the `exec` result of this expression.
    * @type {RegExp}
    * @memberof MessageMentions
    */
-  static EveryonePattern = /@(everyone|here)/g;
+  static EveryonePattern = /@(?<mention>everyone|here)/;
 
   /**
-   * Regular expression that globally matches user mentions like `<@81440962496172032>`
+   * A regular expression that matches user mentions like `<@81440962496172032>`.
+   * The `id` group property is present on the `exec` result of this expression.
    * @type {RegExp}
    * @memberof MessageMentions
    */
-  static UsersPattern = /<@!?(\d{17,19})>/g;
+  static UsersPattern = FormattingPatterns.UserWithOptionalNickname;
 
   /**
-   * Regular expression that globally matches role mentions like `<@&297577916114403338>`
+   * A regular expression that matches role mentions like `<@&297577916114403338>`.
+   * The `id` group property is present on the `exec` result of this expression.
    * @type {RegExp}
    * @memberof MessageMentions
    */
-  static RolesPattern = /<@&(\d{17,19})>/g;
+  static RolesPattern = FormattingPatterns.Role;
 
   /**
-   * Regular expression that globally matches channel mentions like `<#222079895583457280>`
+   * A regular expression that matches channel mentions like `<#222079895583457280>`.
+   * The `id` group property is present on the `exec` result of this expression.
    * @type {RegExp}
    * @memberof MessageMentions
    */
-  static ChannelsPattern = /<#(\d{17,19})>/g;
+  static ChannelsPattern = FormattingPatterns.Channel;
+
+  /**
+   * A global regular expression variant of {@link MessageMentions.ChannelsPattern}.
+   * @type {RegExp}
+   * @memberof MessageMentions
+   * @private
+   */
+  static GlobalChannelsPattern = new RegExp(this.ChannelsPattern.source, 'g');
+
+  /**
+   * A global regular expression variant of {@link MessageMentions.UsersPattern}.
+   * @type {RegExp}
+   * @memberof MessageMentions
+   * @private
+   */
+  static GlobalUsersPattern = new RegExp(this.UsersPattern.source, 'g');
 
   constructor(message, users, roles, everyone, crosspostedChannels, repliedUser) {
     /**
@@ -115,10 +136,17 @@ class MessageMentions {
 
     /**
      * Cached channels for {@link MessageMentions#channels}
-     * @type {?Collection<Snowflake, Channel>}
+     * @type {?Collection<Snowflake, BaseChannel>}
      * @private
      */
     this._channels = null;
+
+    /**
+     * Cached users for {@link MessageMentions#parsedUsers}
+     * @type {?Collection<Snowflake, User>}
+     * @private
+     */
+    this._parsedUsers = null;
 
     /**
      * Crossposted channel data.
@@ -179,18 +207,37 @@ class MessageMentions {
   /**
    * Any channels that were mentioned
    * <info>Order as they appear first in the message content</info>
-   * @type {Collection<Snowflake, Channel>}
+   * @type {Collection<Snowflake, BaseChannel>}
    * @readonly
    */
   get channels() {
     if (this._channels) return this._channels;
     this._channels = new Collection();
     let matches;
-    while ((matches = this.constructor.ChannelsPattern.exec(this._content)) !== null) {
-      const chan = this.client.channels.cache.get(matches[1]);
-      if (chan) this._channels.set(chan.id, chan);
+
+    while ((matches = this.constructor.GlobalChannelsPattern.exec(this._content)) !== null) {
+      const channel = this.client.channels.cache.get(matches.groups.id);
+      if (channel) this._channels.set(channel.id, channel);
     }
+
     return this._channels;
+  }
+
+  /**
+   * Any user mentions that were included in the message content
+   * <info>Order as they appear first in the message content</info>
+   * @type {Collection<Snowflake, User>}
+   * @readonly
+   */
+  get parsedUsers() {
+    if (this._parsedUsers) return this._parsedUsers;
+    this._parsedUsers = new Collection();
+    let matches;
+    while ((matches = this.constructor.GlobalUsersPattern.exec(this._content)) !== null) {
+      const user = this.client.users.cache.get(matches[1]);
+      if (user) this._parsedUsers.set(user.id, user);
+    }
+    return this._parsedUsers;
   }
 
   /**
@@ -212,16 +259,23 @@ class MessageMentions {
    */
   has(data, { ignoreDirect = false, ignoreRoles = false, ignoreRepliedUser = false, ignoreEveryone = false } = {}) {
     const user = this.client.users.resolve(data);
-    const role = this.guild?.roles.resolve(data);
-    const channel = this.client.channels.resolve(data);
 
-    if (!ignoreRepliedUser && this.users.has(this.repliedUser?.id) && this.repliedUser?.id === user?.id) return true;
+    if (!ignoreEveryone && user && this.everyone) return true;
+
+    const userWasRepliedTo = user && this.repliedUser?.id === user.id;
+
+    if (!ignoreRepliedUser && userWasRepliedTo && this.users.has(user.id)) return true;
+
     if (!ignoreDirect) {
-      if (this.users.has(user?.id)) return true;
-      if (this.roles.has(role?.id)) return true;
-      if (this.channels.has(channel?.id)) return true;
+      if (user && (!ignoreRepliedUser || this.parsedUsers.has(user.id)) && this.users.has(user.id)) return true;
+
+      const role = this.guild?.roles.resolve(data);
+      if (role && this.roles.has(role.id)) return true;
+
+      const channel = this.client.channels.resolve(data);
+      if (channel && this.channels.has(channel.id)) return true;
     }
-    if (user && !ignoreEveryone && this.everyone) return true;
+
     if (!ignoreRoles) {
       const member = this.guild?.members.resolve(data);
       if (member) {
@@ -233,7 +287,7 @@ class MessageMentions {
   }
 
   toJSON() {
-    return Util.flatten(this, {
+    return flatten(this, {
       members: true,
       channels: true,
     });

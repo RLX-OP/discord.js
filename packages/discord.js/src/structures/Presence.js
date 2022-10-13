@@ -3,7 +3,7 @@
 const Base = require('./Base');
 const { Emoji } = require('./Emoji');
 const ActivityFlagsBitField = require('../util/ActivityFlagsBitField');
-const Util = require('../util/Util');
+const { flatten } = require('../util/Util');
 
 /**
  * Activity sent in a message.
@@ -132,7 +132,7 @@ class Presence extends Base {
   }
 
   toJSON() {
-    return Util.flatten(this);
+    return flatten(this);
   }
 }
 
@@ -238,7 +238,7 @@ class Activity {
      * Creation date of the activity
      * @type {number}
      */
-    this.createdTimestamp = Date.parse(data.created_at);
+    this.createdTimestamp = data.created_at;
   }
 
   /**
@@ -268,7 +268,7 @@ class Activity {
   }
 
   /**
-   * When concatenated with a string, this automatically returns the activities' name instead of the Activity object.
+   * When concatenated with a string, this automatically returns the activity's name instead of the Activity object.
    * @returns {string}
    */
   toString() {

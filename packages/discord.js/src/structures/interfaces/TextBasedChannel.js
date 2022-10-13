@@ -3,7 +3,7 @@
 const { Collection } = require('@discordjs/collection');
 const { DiscordSnowflake } = require('@sapphire/snowflake');
 const { InteractionType, Routes } = require('discord-api-types/v10');
-const { TypeError, Error } = require('../../errors');
+const { DiscordjsTypeError, DiscordjsError, ErrorCodes } = require('../../errors');
 const InteractionCollector = require('../InteractionCollector');
 const MessageCollector = require('../MessageCollector');
 const MessagePayload = require('../MessagePayload');
@@ -52,27 +52,35 @@ class TextBasedChannel {
   }
 
   /**
-   * Base options provided when sending.
+   * The base message options for messages.
    * @typedef {Object} BaseMessageOptions
-   * @property {boolean} [tts=false] Whether or not the message should be spoken aloud
-   * @property {string} [nonce=''] The nonce for the message
-   * @property {string} [content=''] The content for the message
+   * @property {string|null} [content=''] The content for the message. This can only be `null` when editing a message.
    * @property {Embed[]|APIEmbed[]} [embeds] The embeds for the message
-   * (see [here](https://discord.com/developers/docs/resources/channel#embed-object) for more details)
    * @property {MessageMentionOptions} [allowedMentions] Which mentions should be parsed from the message content
    * (see [here](https://discord.com/developers/docs/resources/channel#allowed-mentions-object) for more details)
-   * @property {FileOptions[]|BufferResolvable[]|Attachment[]} [files] Files to send with the message
+   * @property {Array<JSONEncodable<AttachmentPayload>>|BufferResolvable[]|Attachment[]|AttachmentBuilder[]} [files]
+   * The files to send with the message.
    * @property {ActionRow[]|ActionRowOptions[]} [components]
    * Action rows containing interactive components for the message (buttons, select menus)
-   * @property {Attachment[]} [attachments] Attachments to send in the message
    */
 
   /**
-   * Options provided when sending or editing a message.
-   * @typedef {BaseMessageOptions} MessageOptions
+   * Options for sending a message with a reply.
+   * @typedef {Object} ReplyOptions
+   * @property {MessageResolvable} messageReference The message to reply to (must be in the same channel and not system)
+   * @property {boolean} [failIfNotExists=this.client.options.failIfNotExists] Whether to error if the referenced
+   * message does not exist (creates a standard message in this case when false)
+   */
+
+  /**
+   * The options for sending a message.
+   * @typedef {BaseMessageOptions} MessageCreateOptions
+   * @property {boolean} [tts=false] Whether the message should be spoken aloud
+   * @property {string} [nonce=''] The nonce for the message
    * @property {ReplyOptions} [reply] The options for replying to a message
-   * @property {StickerResolvable[]} [stickers=[]] Stickers to send in the message
-   * @property {MessageFlags} [flags] Which flags to set for the message. Only `MessageFlags.SuppressEmbeds` can be set.
+   * @property {StickerResolvable[]} [stickers=[]] The stickers to send in the message
+   * @property {MessageFlags} [flags] Which flags to set for the message.
+   * <info>Only `MessageFlags.SuppressEmbeds` can be set.</info>
    */
 
   /**
@@ -100,16 +108,8 @@ class TextBasedChannel {
    */
 
   /**
-   * Options for sending a message with a reply.
-   * @typedef {Object} ReplyOptions
-   * @property {MessageResolvable} messageReference The message to reply to (must be in the same channel and not system)
-   * @property {boolean} [failIfNotExists=this.client.options.failIfNotExists] Whether to error if the referenced
-   * message does not exist (creates a standard message in this case when false)
-   */
-
-  /**
    * Sends a message to this channel.
-   * @param {string|MessagePayload|MessageOptions} options The options to provide
+   * @param {string|MessagePayload|MessageCreateOptions} options The options to provide
    * @returns {Promise<Message>}
    * @example
    * // Send a basic message
@@ -273,7 +273,7 @@ class TextBasedChannel {
       collector.once('end', (interactions, reason) => {
         const interaction = interactions.first();
         if (interaction) resolve(interaction);
-        else reject(new Error('INTERACTION_COLLECTOR_ERROR', reason));
+        else reject(new DiscordjsError(ErrorCodes.InteractionCollectorError, reason));
       });
     });
   }
@@ -283,7 +283,7 @@ class TextBasedChannel {
    * @param {Collection<Snowflake, Message>|MessageResolvable[]|number} messages
    * Messages or number of messages to delete
    * @param {boolean} [filterOld=false] Filter messages to remove those which are older than two weeks automatically
-   * @returns {Promise<Collection<Snowflake, Message>>} Returns the deleted messages
+   * @returns {Promise<Collection<Snowflake, Message|undefined>>} Returns the deleted messages
    * @example
    * // Bulk delete messages
    * channel.bulkDelete(5)
@@ -298,13 +298,13 @@ class TextBasedChannel {
       }
       if (messageIds.length === 0) return new Collection();
       if (messageIds.length === 1) {
-        await this.client.rest.delete(Routes.channelMessage(this.id, messageIds[0]));
         const message = this.client.actions.MessageDelete.getMessage(
           {
             message_id: messageIds[0],
           },
           this,
         );
+        await this.client.rest.delete(Routes.channelMessage(this.id, messageIds[0]));
         return message ? new Collection([[message.id, message]]) : new Collection();
       }
       await this.client.rest.post(Routes.channelBulkDelete(this.id), { body: { messages: messageIds } });
@@ -326,7 +326,7 @@ class TextBasedChannel {
       const msgs = await this.messages.fetch({ limit: messages });
       return this.bulkDelete(msgs, filterOld);
     }
-    throw new TypeError('MESSAGE_BULK_DELETE_TYPE');
+    throw new DiscordjsTypeError(ErrorCodes.MessageBulkDeleteType);
   }
 
   /**
@@ -345,26 +345,47 @@ class TextBasedChannel {
   /**
    * Options used to create a {@link Webhook} in a {@link TextChannel} or a {@link NewsChannel}.
    * @typedef {Object} ChannelWebhookCreateOptions
+   * @property {string} name The name of the webhook
    * @property {?(BufferResolvable|Base64Resolvable)} [avatar] Avatar for the webhook
    * @property {string} [reason] Reason for creating the webhook
    */
 
   /**
    * Creates a webhook for the channel.
-   * @param {string} name The name of the webhook
    * @param {ChannelWebhookCreateOptions} [options] Options for creating the webhook
    * @returns {Promise<Webhook>} Returns the created Webhook
    * @example
    * // Create a webhook for the current channel
-   * channel.createWebhook('Snek', {
+   * channel.createWebhook({
+   *   name: 'Snek',
    *   avatar: 'https://i.imgur.com/mI8XcpG.jpg',
    *   reason: 'Needed a cool new Webhook'
    * })
    *   .then(console.log)
    *   .catch(console.error)
    */
-  createWebhook(name, options = {}) {
-    return this.guild.channels.createWebhook(this.id, name, options);
+  createWebhook(options) {
+    return this.guild.channels.createWebhook({ channel: this.id, ...options });
+  }
+
+  /**
+   * Sets the rate limit per user (slowmode) for this channel.
+   * @param {number} rateLimitPerUser The new rate limit in seconds
+   * @param {string} [reason] Reason for changing the channel's rate limit
+   * @returns {Promise<this>}
+   */
+  setRateLimitPerUser(rateLimitPerUser, reason) {
+    return this.edit({ rateLimitPerUser, reason });
+  }
+
+  /**
+   * Sets whether this channel is flagged as NSFW.
+   * @param {boolean} [nsfw=true] Whether the channel should be considered NSFW
+   * @param {string} [reason] Reason for changing the channel's NSFW flag
+   * @returns {Promise<this>}
+   */
+  setNSFW(nsfw = true, reason) {
+    return this.edit({ nsfw, reason });
   }
 
   static applyToClass(structure, full = false, ignore = []) {
@@ -381,6 +402,8 @@ class TextBasedChannel {
         'awaitMessageComponent',
         'fetchWebhooks',
         'createWebhook',
+        'setRateLimitPerUser',
+        'setNSFW',
       );
     }
     for (const prop of props) {

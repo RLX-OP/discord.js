@@ -20,7 +20,8 @@ const IntegrationApplication = require('./IntegrationApplication');
  */
 
 /**
- *  Represents a guild integration.
+ * Represents a guild integration.
+ * @extends {Base}
  */
 class Integration extends Base {
   constructor(client, data, guild) {
@@ -183,6 +184,16 @@ class Integration extends Base {
       }
     } else {
       this.application ??= null;
+    }
+
+    if ('scopes' in data) {
+      /**
+       * The scopes this application has been authorized for
+       * @type {OAuth2Scopes[]}
+       */
+      this.scopes = data.scopes;
+    } else {
+      this.scopes ??= [];
     }
   }
 

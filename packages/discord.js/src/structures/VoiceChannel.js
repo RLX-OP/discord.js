@@ -8,6 +8,7 @@ const MessageManager = require('../managers/MessageManager');
 /**
  * Represents a guild voice channel on Discord.
  * @extends {BaseGuildVoiceChannel}
+ * @implements {TextBasedChannel}
  */
 class VoiceChannel extends BaseGuildVoiceChannel {
   constructor(guild, data, client) {
@@ -18,6 +19,12 @@ class VoiceChannel extends BaseGuildVoiceChannel {
      * @type {MessageManager}
      */
     this.messages = new MessageManager(this);
+
+    /**
+     * If the guild considers this channel NSFW
+     * @type {boolean}
+     */
+    this.nsfw = Boolean(data.nsfw);
 
     this._patch(data);
   }
@@ -45,6 +52,18 @@ class VoiceChannel extends BaseGuildVoiceChannel {
 
     if ('messages' in data) {
       for (const message of data.messages) this.messages._add(message);
+    }
+
+    if ('rate_limit_per_user' in data) {
+      /**
+       * The rate limit per user (slowmode) for this channel in seconds
+       * @type {number}
+       */
+      this.rateLimitPerUser = data.rate_limit_per_user;
+    }
+
+    if ('nsfw' in data) {
+      this.nsfw = Boolean(data.nsfw);
     }
   }
 
@@ -88,7 +107,7 @@ class VoiceChannel extends BaseGuildVoiceChannel {
    *   .catch(console.error);
    */
   setBitrate(bitrate, reason) {
-    return this.edit({ bitrate }, reason);
+    return this.edit({ bitrate, reason });
   }
 
   /**
@@ -103,7 +122,7 @@ class VoiceChannel extends BaseGuildVoiceChannel {
    *   .catch(console.error);
    */
   setUserLimit(userLimit, reason) {
-    return this.edit({ userLimit }, reason);
+    return this.edit({ userLimit, reason });
   }
 
   /**
@@ -113,7 +132,7 @@ class VoiceChannel extends BaseGuildVoiceChannel {
    * @returns {Promise<VoiceChannel>}
    */
   setVideoQualityMode(videoQualityMode, reason) {
-    return this.edit({ videoQualityMode }, reason);
+    return this.edit({ videoQualityMode, reason });
   }
 
   // These are here only for documentation purposes - they are implemented by TextBasedChannel
@@ -128,22 +147,26 @@ class VoiceChannel extends BaseGuildVoiceChannel {
   bulkDelete() {}
   fetchWebhooks() {}
   createWebhook() {}
-
-  /**
-   * Sets the RTC region of the channel.
-   * @name VoiceChannel#setRTCRegion
-   * @param {?string} rtcRegion The new region of the channel. Set to `null` to remove a specific region for the channel
-   * @param {string} [reason] The reason for modifying this region.
-   * @returns {Promise<VoiceChannel>}
-   * @example
-   * // Set the RTC region to sydney
-   * voiceChannel.setRTCRegion('sydney');
-   * @example
-   * // Remove a fixed region for this channel - let Discord decide automatically
-   * voiceChannel.setRTCRegion(null, 'We want to let Discord decide.');
-   */
+  setRateLimitPerUser() {}
+  setNSFW() {}
 }
 
 TextBasedChannel.applyToClass(VoiceChannel, true, ['lastPinAt']);
+
+/**
+ * Sets the RTC region of the channel.
+ * @method setRTCRegion
+ * @memberof VoiceChannel
+ * @instance
+ * @param {?string} rtcRegion The new region of the channel. Set to `null` to remove a specific region for the channel
+ * @param {string} [reason] The reason for modifying this region.
+ * @returns {Promise<VoiceChannel>}
+ * @example
+ * // Set the RTC region to sydney
+ * voiceChannel.setRTCRegion('sydney');
+ * @example
+ * // Remove a fixed region for this channel - let Discord decide automatically
+ * voiceChannel.setRTCRegion(null, 'We want to let Discord decide.');
+ */
 
 module.exports = VoiceChannel;

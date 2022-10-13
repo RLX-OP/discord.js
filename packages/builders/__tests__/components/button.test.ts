@@ -1,11 +1,12 @@
 import {
-	APIButtonComponentWithCustomId,
-	APIButtonComponentWithURL,
 	ButtonStyle,
 	ComponentType,
+	type APIButtonComponentWithCustomId,
+	type APIButtonComponentWithURL,
 } from 'discord-api-types/v10';
-import { buttonLabelValidator, buttonStyleValidator } from '../../src/components/Assertions';
-import { ButtonBuilder } from '../../src/components/button/Button';
+import { describe, test, expect } from 'vitest';
+import { buttonLabelValidator, buttonStyleValidator } from '../../src/components/Assertions.js';
+import { ButtonBuilder } from '../../src/components/button/Button.js';
 
 const buttonComponent = () => new ButtonBuilder();
 
@@ -30,7 +31,7 @@ describe('Button Components', () => {
 			expect(() => buttonStyleValidator.parse(ButtonStyle.Secondary)).not.toThrowError();
 		});
 
-		test('GIVEN invalid style THEN validator does not throw', () => {
+		test('GIVEN invalid style THEN validator does throw', () => {
 			expect(() => buttonStyleValidator.parse(7)).toThrowError();
 		});
 
@@ -70,7 +71,7 @@ describe('Button Components', () => {
 			}).toThrowError();
 
 			expect(() => {
-				// @ts-expect-error
+				// @ts-expect-error: Invalid emoji
 				const button = buttonComponent().setEmoji('test');
 				button.toJSON();
 			}).toThrowError();
@@ -102,9 +103,9 @@ describe('Button Components', () => {
 
 			expect(() => buttonComponent().setStyle(24)).toThrowError();
 			expect(() => buttonComponent().setLabel(longStr)).toThrowError();
-			// @ts-expect-error
+			// @ts-expect-error: Invalid parameter for disabled
 			expect(() => buttonComponent().setDisabled(0)).toThrowError();
-			// @ts-expect-error
+			// @ts-expect-error: Invalid emoji
 			expect(() => buttonComponent().setEmoji('foo')).toThrowError();
 
 			expect(() => buttonComponent().setURL('foobar')).toThrowError();
@@ -124,7 +125,7 @@ describe('Button Components', () => {
 			expect(
 				buttonComponent()
 					.setCustomId(interactionData.custom_id)
-					.setLabel(interactionData.label)
+					.setLabel(interactionData.label!)
 					.setStyle(interactionData.style)
 					.setDisabled(interactionData.disabled)
 					.toJSON(),
@@ -140,7 +141,7 @@ describe('Button Components', () => {
 
 			expect(new ButtonBuilder(linkData).toJSON()).toEqual(linkData);
 
-			expect(buttonComponent().setLabel(linkData.label).setDisabled(true).setURL(linkData.url));
+			expect(buttonComponent().setLabel(linkData.label!).setDisabled(true).setURL(linkData.url));
 		});
 	});
 });

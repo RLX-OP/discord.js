@@ -1,14 +1,14 @@
 import {
-	APIApplicationCommandSubcommandGroupOption,
-	APIApplicationCommandSubcommandOption,
 	ApplicationCommandOptionType,
+	type APIApplicationCommandSubcommandGroupOption,
+	type APIApplicationCommandSubcommandOption,
 } from 'discord-api-types/v10';
 import { mix } from 'ts-mixer';
-import { assertReturnOfBuilder, validateMaxOptionsLength, validateRequiredParameters } from './Assertions';
-import type { ToAPIApplicationCommandOptions } from './SlashCommandBuilder';
-import type { ApplicationCommandOptionBase } from './mixins/ApplicationCommandOptionBase';
-import { SharedNameAndDescription } from './mixins/NameAndDescription';
-import { SharedSlashCommandOptions } from './mixins/SharedSlashCommandOptions';
+import { assertReturnOfBuilder, validateMaxOptionsLength, validateRequiredParameters } from './Assertions.js';
+import type { ToAPIApplicationCommandOptions } from './SlashCommandBuilder.js';
+import type { ApplicationCommandOptionBase } from './mixins/ApplicationCommandOptionBase.js';
+import { SharedNameAndDescription } from './mixins/NameAndDescription.js';
+import { SharedSlashCommandOptions } from './mixins/SharedSlashCommandOptions.js';
 
 /**
  * Represents a folder for subcommands
@@ -35,7 +35,7 @@ export class SlashCommandSubcommandGroupBuilder implements ToAPIApplicationComma
 	/**
 	 * Adds a new subcommand to this group
 	 *
-	 * @param input A function that returns a subcommand builder, or an already built builder
+	 * @param input - A function that returns a subcommand builder, or an already built builder
 	 */
 	public addSubcommand(
 		input:

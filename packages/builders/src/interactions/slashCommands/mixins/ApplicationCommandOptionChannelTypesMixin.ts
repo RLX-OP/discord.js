@@ -6,11 +6,12 @@ const allowedChannelTypes = [
 	ChannelType.GuildText,
 	ChannelType.GuildVoice,
 	ChannelType.GuildCategory,
-	ChannelType.GuildNews,
-	ChannelType.GuildNewsThread,
-	ChannelType.GuildPublicThread,
-	ChannelType.GuildPrivateThread,
+	ChannelType.GuildAnnouncement,
+	ChannelType.AnnouncementThread,
+	ChannelType.PublicThread,
+	ChannelType.PrivateThread,
 	ChannelType.GuildStageVoice,
+	ChannelType.GuildForum,
 ] as const;
 
 export type ApplicationCommandOptionAllowedChannelTypes = typeof allowedChannelTypes[number];
@@ -23,7 +24,7 @@ export class ApplicationCommandOptionChannelTypesMixin {
 	/**
 	 * Adds channel types to this option
 	 *
-	 * @param channelTypes The channel types to add
+	 * @param channelTypes - The channel types to add
 	 */
 	public addChannelTypes(...channelTypes: ApplicationCommandOptionAllowedChannelTypes[]) {
 		if (this.channel_types === undefined) {

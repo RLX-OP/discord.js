@@ -1,18 +1,19 @@
 'use strict';
 
 const { ChannelType, PermissionFlagsBits, Routes } = require('discord-api-types/v10');
-const { Channel } = require('./Channel');
+const { BaseChannel } = require('./BaseChannel');
 const TextBasedChannel = require('./interfaces/TextBasedChannel');
-const { RangeError } = require('../errors');
+const { DiscordjsRangeError, ErrorCodes } = require('../errors');
 const MessageManager = require('../managers/MessageManager');
 const ThreadMemberManager = require('../managers/ThreadMemberManager');
+const ChannelFlagsBitField = require('../util/ChannelFlagsBitField');
 
 /**
  * Represents a thread channel on Discord.
- * @extends {Channel}
+ * @extends {BaseChannel}
  * @implements {TextBasedChannel}
  */
-class ThreadChannel extends Channel {
+class ThreadChannel extends BaseChannel {
   constructor(guild, data, client, fromInteraction = false) {
     super(guild?.client ?? client, data, false);
 
@@ -75,11 +76,12 @@ class ThreadChannel extends Channel {
       this.locked = data.thread_metadata.locked ?? false;
 
       /**
-       * Whether members without `MANAGE_THREADS` can invite other members without `MANAGE_THREADS`
-       * <info>Always `null` in public threads</info>
+       * Whether members without the {@link PermissionFlagsBits.ManageThreads} permission
+       * can invite other members to this thread.
+       * <info>This property is always `null` in public threads.</info>
        * @type {?boolean}
        */
-      this.invitable = this.type === ChannelType.GuildPrivateThread ? data.thread_metadata.invitable ?? false : null;
+      this.invitable = this.type === ChannelType.PrivateThread ? data.thread_metadata.invitable ?? false : null;
 
       /**
        * Whether the thread is archived
@@ -89,7 +91,7 @@ class ThreadChannel extends Channel {
 
       /**
        * The amount of time (in minutes) after which the thread will automatically archive in case of no recent activity
-       * @type {?number}
+       * @type {?ThreadAutoArchiveDuration}
        */
       this.autoArchiveDuration = data.thread_metadata.auto_archive_duration;
 
@@ -113,7 +115,7 @@ class ThreadChannel extends Channel {
       this.invitable ??= null;
     }
 
-    this._createdTimestamp ??= this.type === ChannelType.GuildPrivateThread ? super.createdTimestamp : null;
+    this._createdTimestamp ??= this.type === ChannelType.PrivateThread ? super.createdTimestamp : null;
 
     if ('owner_id' in data) {
       /**
@@ -158,8 +160,8 @@ class ThreadChannel extends Channel {
     if ('message_count' in data) {
       /**
        * The approximate count of messages in this thread
-       * <info>This stops counting at 50. If you need an approximate value higher than that, use
-       * `ThreadChannel#messages.cache.size`</info>
+       * <info>Threads created before July 1, 2022 may have an inaccurate count.
+       * If you need an approximate value higher than that, use `ThreadChannel#messages.cache.size`</info>
        * @type {?number}
        */
       this.messageCount = data.message_count;
@@ -179,8 +181,29 @@ class ThreadChannel extends Channel {
       this.memberCount ??= null;
     }
 
+    if ('total_message_sent' in data) {
+      /**
+       * The number of messages ever sent in a thread, similar to {@link ThreadChannel#messageCount} except it
+       * will not decrement whenever a message is deleted
+       * @type {?number}
+       */
+      this.totalMessageSent = data.total_message_sent;
+    } else {
+      this.totalMessageSent ??= null;
+    }
+
     if (data.member && this.client.user) this.members._add({ user_id: this.client.user.id, ...data.member });
     if (data.messages) for (const message of data.messages) this.messages._add(message);
+
+    if ('applied_tags' in data) {
+      /**
+       * The tags applied to this thread
+       * @type {Snowflake[]}
+       */
+      this.appliedTags = data.applied_tags;
+    } else {
+      this.appliedTags ??= [];
+    }
   }
 
   /**
@@ -223,7 +246,7 @@ class ThreadChannel extends Channel {
 
   /**
    * The parent channel of this thread
-   * @type {?(NewsChannel|TextChannel)}
+   * @type {?(NewsChannel|TextChannel|ForumChannel)}
    * @readonly
    */
   get parent() {
@@ -252,7 +275,8 @@ class ThreadChannel extends Channel {
    * Gets the overall set of permissions for a member or role in this thread's parent channel, taking overwrites into
    * account.
    * @param {GuildMemberResolvable|RoleResolvable} memberOrRole The member or role to obtain the overall permissions for
-   * @param {boolean} [checkAdmin=true] Whether having `ADMINISTRATOR` will return all permissions
+   * @param {boolean} [checkAdmin=true] Whether having the {@link PermissionFlagsBits.Administrator} permission
+   * will return all permissions
    * @returns {?Readonly<PermissionsBitField>}
    */
   permissionsFor(memberOrRole, checkAdmin) {
@@ -272,19 +296,22 @@ class ThreadChannel extends Channel {
     }
 
     // We cannot fetch a single thread member, as of this commit's date, Discord API responds with 405
-    const members = await this.members.fetch(cache);
+    const members = await this.members.fetch({ cache });
     return members.get(this.ownerId) ?? null;
   }
 
   /**
    * Fetches the message that started this thread, if any.
-   * <info>This only works when the thread started from a message in the parent channel, otherwise the promise will
-   * reject. If you just need the id of that message, use {@link ThreadChannel#id} instead.</info>
+   * <info>The `Promise` will reject if the original message in a forum post is deleted
+   * or when the original message in the parent channel is deleted.
+   * If you just need the id of that message, use {@link ThreadChannel#id} instead.</info>
    * @param {BaseFetchOptions} [options] Additional options for this fetch
-   * @returns {Promise<Message>}
+   * @returns {Promise<Message<true>|null>}
    */
-  fetchStarterMessage(options) {
-    return this.parent.messages.fetch(this.id, options);
+  // eslint-disable-next-line require-await
+  async fetchStarterMessage(options) {
+    const channel = this.parent?.type === ChannelType.GuildForum ? this : this.parent;
+    return channel?.messages.fetch({ message: this.id, ...options }) ?? null;
   }
 
   /**
@@ -292,18 +319,20 @@ class ThreadChannel extends Channel {
    * @typedef {Object} ThreadEditData
    * @property {string} [name] The new name for the thread
    * @property {boolean} [archived] Whether the thread is archived
-   * @property {ThreadAutoArchiveDuration} [autoArchiveDuration] The amount of time (in minutes) after which the thread
+   * @property {ThreadAutoArchiveDuration} [autoArchiveDuration] The amount of time after which the thread
    * should automatically archive in case of no recent activity
    * @property {number} [rateLimitPerUser] The rate limit per user (slowmode) for the thread in seconds
    * @property {boolean} [locked] Whether the thread is locked
    * @property {boolean} [invitable] Whether non-moderators can add other non-moderators to a thread
-   * <info>Can only be edited on {@link ChannelType.GuildPrivateThread}</info>
+   * @property {Snowflake[]} [appliedTags] The tags to apply to the thread
+   * @property {ChannelFlagsResolvable} [flags] The flags to set on the channel
+   * @property {string} [reason] Reason for editing the thread
+   * <info>Can only be edited on {@link ChannelType.PrivateThread}</info>
    */
 
   /**
    * Edits this thread.
    * @param {ThreadEditData} data The new data for this thread
-   * @param {string} [reason] Reason for editing this thread
    * @returns {Promise<ThreadChannel>}
    * @example
    * // Edit a thread
@@ -311,7 +340,7 @@ class ThreadChannel extends Channel {
    *   .then(editedThread => console.log(editedThread))
    *   .catch(console.error);
    */
-  async edit(data, reason) {
+  async edit(data) {
     const newData = await this.client.rest.patch(Routes.channel(this.id), {
       body: {
         name: (data.name ?? this.name).trim(),
@@ -319,9 +348,11 @@ class ThreadChannel extends Channel {
         auto_archive_duration: data.autoArchiveDuration,
         rate_limit_per_user: data.rateLimitPerUser,
         locked: data.locked,
-        invitable: this.type === ChannelType.GuildPrivateThread ? data.invitable : undefined,
+        invitable: this.type === ChannelType.PrivateThread ? data.invitable : undefined,
+        applied_tags: data.appliedTags,
+        flags: 'flags' in data ? ChannelFlagsBitField.resolve(data.flags) : undefined,
       },
-      reason,
+      reason: data.reason,
     });
 
     return this.client.actions.ChannelUpdate.handle(newData).updated;
@@ -339,44 +370,45 @@ class ThreadChannel extends Channel {
    *   .catch(console.error);
    */
   setArchived(archived = true, reason) {
-    return this.edit({ archived }, reason);
+    return this.edit({ archived, reason });
   }
 
   /**
    * Sets the duration after which the thread will automatically archive in case of no recent activity.
-   * @param {ThreadAutoArchiveDuration} autoArchiveDuration The amount of time (in minutes) after which the thread
+   * @param {ThreadAutoArchiveDuration} autoArchiveDuration The amount of time after which the thread
    * should automatically archive in case of no recent activity
    * @param {string} [reason] Reason for changing the auto archive duration
    * @returns {Promise<ThreadChannel>}
    * @example
    * // Set the thread's auto archive time to 1 hour
-   * thread.setAutoArchiveDuration(60)
+   * thread.setAutoArchiveDuration(ThreadAutoArchiveDuration.OneHour)
    *   .then(newThread => {
    *     console.log(`Thread will now archive after ${newThread.autoArchiveDuration} minutes of inactivity`);
    *    });
    *   .catch(console.error);
    */
   setAutoArchiveDuration(autoArchiveDuration, reason) {
-    return this.edit({ autoArchiveDuration }, reason);
+    return this.edit({ autoArchiveDuration, reason });
   }
 
   /**
-   * Sets whether members without the `MANAGE_THREADS` permission can invite other members without the
-   * `MANAGE_THREADS` permission to this thread.
+   * Sets whether members without the {@link PermissionFlagsBits.ManageThreads} permission
+   * can invite other members to this thread.
    * @param {boolean} [invitable=true] Whether non-moderators can invite non-moderators to this thread
    * @param {string} [reason] Reason for changing invite
    * @returns {Promise<ThreadChannel>}
    */
   setInvitable(invitable = true, reason) {
-    if (this.type !== ChannelType.GuildPrivateThread) {
-      return Promise.reject(new RangeError('THREAD_INVITABLE_TYPE', this.type));
+    if (this.type !== ChannelType.PrivateThread) {
+      return Promise.reject(new DiscordjsRangeError(ErrorCodes.ThreadInvitableType, this.type));
     }
-    return this.edit({ invitable }, reason);
+    return this.edit({ invitable, reason });
   }
 
   /**
-   * Sets whether the thread can be **unarchived** by anyone with `SEND_MESSAGES` permission.
-   * When a thread is locked only members with `MANAGE_THREADS` can unarchive it.
+   * Sets whether the thread can be **unarchived** by anyone with the
+   * {@link PermissionFlagsBits.SendMessages} permission. When a thread is locked, only members with the
+   * {@link PermissionFlagsBits.ManageThreads} permission can unarchive it.
    * @param {boolean} [locked=true] Whether the thread is locked
    * @param {string} [reason] Reason for locking or unlocking the thread
    * @returns {Promise<ThreadChannel>}
@@ -387,7 +419,7 @@ class ThreadChannel extends Channel {
    *   .catch(console.error);
    */
   setLocked(locked = true, reason) {
-    return this.edit({ locked }, reason);
+    return this.edit({ locked, reason });
   }
 
   /**
@@ -402,7 +434,7 @@ class ThreadChannel extends Channel {
    *   .catch(console.error);
    */
   setName(name, reason) {
-    return this.edit({ name }, reason);
+    return this.edit({ name, reason });
   }
 
   /**
@@ -412,7 +444,17 @@ class ThreadChannel extends Channel {
    * @returns {Promise<ThreadChannel>}
    */
   setRateLimitPerUser(rateLimitPerUser, reason) {
-    return this.edit({ rateLimitPerUser }, reason);
+    return this.edit({ rateLimitPerUser, reason });
+  }
+
+  /**
+   * Set the applied tags for this channel (only applicable to forum threads)
+   * @param {Snowflake[]} appliedTags The tags to set for this channel
+   * @param {string} [reason] Reason for changing the thread's applied tags
+   * @returns {Promise<ThreadChannel>}
+   */
+  setAppliedTags(appliedTags, reason) {
+    return this.edit({ appliedTags, reason });
   }
 
   /**
@@ -431,7 +473,7 @@ class ThreadChannel extends Channel {
    */
   get editable() {
     return (
-      (this.ownerId === this.client.user.id && (this.type !== ChannelType.GuildPrivateThread || this.joined)) ||
+      (this.ownerId === this.client.user.id && (this.type !== ChannelType.PrivateThread || this.joined)) ||
       this.manageable
     );
   }
@@ -446,9 +488,7 @@ class ThreadChannel extends Channel {
       !this.archived &&
       !this.joined &&
       this.permissionsFor(this.client.user)?.has(
-        this.type === ChannelType.GuildPrivateThread
-          ? PermissionFlagsBits.ManageThreads
-          : PermissionFlagsBits.ViewChannel,
+        this.type === ChannelType.PrivateThread ? PermissionFlagsBits.ManageThreads : PermissionFlagsBits.ViewChannel,
         false,
       )
     );
@@ -496,7 +536,7 @@ class ThreadChannel extends Channel {
 
     return (
       !(this.archived && this.locked && !this.manageable) &&
-      (this.type !== ChannelType.GuildPrivateThread || this.joined || this.manageable) &&
+      (this.type !== ChannelType.PrivateThread || this.joined || this.manageable) &&
       permissions.has(PermissionFlagsBits.SendMessagesInThreads, false) &&
       this.guild.members.me.communicationDisabledUntilTimestamp < Date.now()
     );
@@ -509,14 +549,6 @@ class ThreadChannel extends Channel {
    */
   get unarchivable() {
     return this.archived && this.sendable && (!this.locked || this.manageable);
-  }
-
-  /**
-   * Whether this thread is a private thread
-   * @returns {boolean}
-   */
-  isPrivate() {
-    return this.type === ChannelType.GuildPrivateThread;
   }
 
   /**
@@ -545,8 +577,10 @@ class ThreadChannel extends Channel {
   createMessageComponentCollector() {}
   awaitMessageComponent() {}
   bulkDelete() {}
+  // Doesn't work on Thread channels; setRateLimitPerUser() {}
+  // Doesn't work on Thread channels; setNSFW() {}
 }
 
-TextBasedChannel.applyToClass(ThreadChannel, true);
+TextBasedChannel.applyToClass(ThreadChannel, true, ['fetchWebhooks', 'setRateLimitPerUser', 'setNSFW']);
 
 module.exports = ThreadChannel;

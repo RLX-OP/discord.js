@@ -1,8 +1,11 @@
 'use strict';
 
+const { lazy } = require('@discordjs/util');
 const { ApplicationCommandOptionType } = require('discord-api-types/v10');
 const CommandInteraction = require('./CommandInteraction');
 const CommandInteractionOptionResolver = require('./CommandInteractionOptionResolver');
+
+const getMessage = lazy(() => require('./Message').Message);
 
 /**
  * Represents a context menu interaction.
@@ -22,7 +25,7 @@ class ContextMenuCommandInteraction extends CommandInteraction {
     );
 
     /**
-     * The id of the target of the interaction
+     * The id of the target of this interaction
      * @type {Snowflake}
      */
     this.targetId = data.data.target_id;
@@ -48,7 +51,9 @@ class ContextMenuCommandInteraction extends CommandInteraction {
         name: 'message',
         type: '_MESSAGE',
         value: target_id,
-        message: this.channel?.messages._add(resolved.messages[target_id]) ?? resolved.messages[target_id],
+        message:
+          this.channel?.messages._add(resolved.messages[target_id]) ??
+          new (getMessage())(this.client, resolved.messages[target_id]),
       });
     }
 

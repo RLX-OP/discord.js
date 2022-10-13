@@ -3,7 +3,7 @@
 const { Collection } = require('@discordjs/collection');
 const { Routes } = require('discord-api-types/v10');
 const DataManager = require('./DataManager');
-const { TypeError } = require('../errors');
+const { DiscordjsTypeError, ErrorCodes } = require('../errors');
 const { Role } = require('../structures/Role');
 
 /**
@@ -110,7 +110,9 @@ class GuildMemberRoleManager extends DataManager {
       const resolvedRoles = [];
       for (const role of roleOrRoles.values()) {
         const resolvedRole = this.guild.roles.resolveId(role);
-        if (!resolvedRole) throw new TypeError('INVALID_ELEMENT', 'Array or Collection', 'roles', role);
+        if (!resolvedRole) {
+          throw new DiscordjsTypeError(ErrorCodes.InvalidElement, 'Array or Collection', 'roles', role);
+        }
         resolvedRoles.push(resolvedRole);
       }
 
@@ -119,7 +121,11 @@ class GuildMemberRoleManager extends DataManager {
     } else {
       roleOrRoles = this.guild.roles.resolveId(roleOrRoles);
       if (roleOrRoles === null) {
-        throw new TypeError('INVALID_TYPE', 'roles', 'Role, Snowflake or Array or Collection of Roles or Snowflakes');
+        throw new DiscordjsTypeError(
+          ErrorCodes.InvalidType,
+          'roles',
+          'Role, Snowflake or Array or Collection of Roles or Snowflakes',
+        );
       }
 
       await this.client.rest.put(Routes.guildMemberRole(this.guild.id, this.member.id, roleOrRoles), { reason });
@@ -141,7 +147,9 @@ class GuildMemberRoleManager extends DataManager {
       const resolvedRoles = [];
       for (const role of roleOrRoles.values()) {
         const resolvedRole = this.guild.roles.resolveId(role);
-        if (!resolvedRole) throw new TypeError('INVALID_ELEMENT', 'Array or Collection', 'roles', role);
+        if (!resolvedRole) {
+          throw new DiscordjsTypeError(ErrorCodes.InvalidElement, 'Array or Collection', 'roles', role);
+        }
         resolvedRoles.push(resolvedRole);
       }
 
@@ -150,7 +158,11 @@ class GuildMemberRoleManager extends DataManager {
     } else {
       roleOrRoles = this.guild.roles.resolveId(roleOrRoles);
       if (roleOrRoles === null) {
-        throw new TypeError('INVALID_TYPE', 'roles', 'Role, Snowflake or Array or Collection of Roles or Snowflakes');
+        throw new DiscordjsTypeError(
+          ErrorCodes.InvalidType,
+          'roles',
+          'Role, Snowflake or Array or Collection of Roles or Snowflakes',
+        );
       }
 
       await this.client.rest.delete(Routes.guildMemberRole(this.guild.id, this.member.id, roleOrRoles), { reason });
@@ -179,7 +191,7 @@ class GuildMemberRoleManager extends DataManager {
    *   .catch(console.error);
    */
   set(roles, reason) {
-    return this.member.edit({ roles }, reason);
+    return this.member.edit({ roles, reason });
   }
 
   clone() {

@@ -1,7 +1,7 @@
-import { MockAgent, setGlobalDispatcher } from 'undici';
-import { Interceptable } from 'undici/types/mock-interceptor';
-import { genPath } from './util';
-import { REST } from '../src';
+import { MockAgent, setGlobalDispatcher, type Interceptable } from 'undici';
+import { beforeEach, afterEach, test, expect } from 'vitest';
+import { REST } from '../src/index.js';
+import { genPath } from './util.js';
 
 const api = new REST();
 
@@ -34,7 +34,7 @@ test('no token', async () => {
 });
 
 test('negative offset', () => {
-	const badREST = new REST({ offset: -5000 });
+	const badREST = new REST({ offset: -5_000 });
 
-	expect(badREST.requestManager.options.offset).toBe(0);
+	expect(badREST.requestManager.options.offset).toEqual(0);
 });

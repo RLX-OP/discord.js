@@ -1,28 +1,30 @@
+import { EventEmitter } from 'node:events';
 import { VoiceOpcodes } from 'discord-api-types/voice/v4';
-import { TypedEmitter } from 'tiny-typed-emitter';
-import WebSocket, { MessageEvent } from 'ws';
-import type { Awaited } from '../util/util';
+import WebSocket, { type MessageEvent } from 'ws';
 
-/**
- * Debug event for VoiceWebSocket.
- *
- * @event VoiceWebSocket#debug
- * @type {string}
- */
-
-export interface VoiceWebSocketEvents {
-	error: (error: Error) => Awaited<void>;
-	open: (event: WebSocket.Event) => Awaited<void>;
-	close: (event: WebSocket.CloseEvent) => Awaited<void>;
-	debug: (message: string) => Awaited<void>;
-	packet: (packet: any) => Awaited<void>;
+export interface VoiceWebSocket extends EventEmitter {
+	on(event: 'error', listener: (error: Error) => void): this;
+	on(event: 'open', listener: (event: WebSocket.Event) => void): this;
+	on(event: 'close', listener: (event: WebSocket.CloseEvent) => void): this;
+	/**
+	 * Debug event for VoiceWebSocket.
+	 *
+	 * @eventProperty
+	 */
+	on(event: 'debug', listener: (message: string) => void): this;
+	/**
+	 * Packet event.
+	 *
+	 * @eventProperty
+	 */
+	on(event: 'packet', listener: (packet: any) => void): this;
 }
 
 /**
  * An extension of the WebSocket class to provide helper functionality when interacting
  * with the Discord Voice gateway.
  */
-export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
+export class VoiceWebSocket extends EventEmitter {
 	/**
 	 * The current heartbeat interval, if any.
 	 */
@@ -53,7 +55,7 @@ export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
 	/**
 	 * The debug logger function, if debugging is enabled.
 	 */
-	private readonly debug: null | ((message: string) => void);
+	private readonly debug: ((message: string) => void) | null;
 
 	/**
 	 * The underlying WebSocket of this wrapper.
@@ -68,11 +70,10 @@ export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
 	public constructor(address: string, debug: boolean) {
 		super();
 		this.ws = new WebSocket(address);
-		this.ws.onmessage = (e) => this.onMessage(e);
-		this.ws.onopen = (e) => this.emit('open', e);
-		// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-		this.ws.onerror = (e: Error | WebSocket.ErrorEvent) => this.emit('error', e instanceof Error ? e : e.error);
-		this.ws.onclose = (e) => this.emit('close', e);
+		this.ws.onmessage = (err) => this.onMessage(err);
+		this.ws.onopen = (err) => this.emit('open', err);
+		this.ws.onerror = (err: Error | WebSocket.ErrorEvent) => this.emit('error', err instanceof Error ? err : err.error);
+		this.ws.onclose = (err) => this.emit('close', err);
 
 		this.lastHeartbeatAck = 0;
 		this.lastHeartbeatSend = 0;
@@ -87,10 +88,10 @@ export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
 		try {
 			this.debug?.('destroyed');
 			this.setHeartbeatInterval(-1);
-			this.ws.close(1000);
+			this.ws.close(1_000);
 		} catch (error) {
-			const e = error as Error;
-			this.emit('error', e);
+			const err = error as Error;
+			this.emit('error', err);
 		}
 	}
 
@@ -107,27 +108,19 @@ export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
 
 		let packet: any;
 		try {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 			packet = JSON.parse(event.data);
 		} catch (error) {
-			const e = error as Error;
-			this.emit('error', e);
+			const err = error as Error;
+			this.emit('error', err);
 			return;
 		}
 
-		// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 		if (packet.op === VoiceOpcodes.HeartbeatAck) {
 			this.lastHeartbeatAck = Date.now();
 			this.missedHeartbeats = 0;
 			this.ping = this.lastHeartbeatAck - this.lastHeartbeatSend;
 		}
 
-		/**
-		 * Packet event.
-		 *
-		 * @event VoiceWebSocket#packet
-		 * @type {any}
-		 */
 		this.emit('packet', packet);
 	}
 
@@ -140,10 +133,11 @@ export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
 		try {
 			const stringified = JSON.stringify(packet);
 			this.debug?.(`>> ${stringified}`);
-			return this.ws.send(stringified);
+			this.ws.send(stringified);
+			return;
 		} catch (error) {
-			const e = error as Error;
-			this.emit('error', e);
+			const err = error as Error;
+			this.emit('error', err);
 		}
 	}
 
@@ -154,8 +148,9 @@ export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
 		this.lastHeartbeatSend = Date.now();
 		this.missedHeartbeats++;
 		const nonce = this.lastHeartbeatSend;
-		return this.sendPacket({
+		this.sendPacket({
 			op: VoiceOpcodes.Heartbeat,
+			// eslint-disable-next-line id-length
 			d: nonce,
 		});
 	}
@@ -174,6 +169,7 @@ export class VoiceWebSocket extends TypedEmitter<VoiceWebSocketEvents> {
 					this.ws.close();
 					this.setHeartbeatInterval(-1);
 				}
+
 				this.sendHeartbeat();
 			}, ms);
 		}

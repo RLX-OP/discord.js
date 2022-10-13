@@ -2,12 +2,15 @@
 
 const { Buffer } = require('node:buffer');
 const { isJSONEncodable } = require('@discordjs/builders');
+const { lazy } = require('@discordjs/util');
 const { MessageFlags } = require('discord-api-types/v10');
 const ActionRowBuilder = require('./ActionRowBuilder');
-const { RangeError } = require('../errors');
+const { DiscordjsRangeError, ErrorCodes } = require('../errors');
 const DataResolver = require('../util/DataResolver');
 const MessageFlagsBitField = require('../util/MessageFlagsBitField');
-const Util = require('../util/Util');
+const { basename, verifyString } = require('../util/Util');
+
+const getBaseInteraction = lazy(() => require('./BaseInteraction'));
 
 /**
  * Represents a message to be sent to the API.
@@ -15,7 +18,7 @@ const Util = require('../util/Util');
 class MessagePayload {
   /**
    * @param {MessageTarget} target The target for this message to be sent to
-   * @param {MessageOptions|WebhookMessageOptions} options Options passed in from send
+   * @param {MessagePayloadOption} options The payload of this message
    */
   constructor(target, options) {
     /**
@@ -25,8 +28,8 @@ class MessagePayload {
     this.target = target;
 
     /**
-     * Options passed in from send
-     * @type {MessageOptions|WebhookMessageOptions}
+     * The payload of this message.
+     * @type {MessagePayloadOption}
      */
     this.options = options;
 
@@ -86,14 +89,14 @@ class MessagePayload {
   }
 
   /**
-   * Whether or not the target is an {@link Interaction} or an {@link InteractionWebhook}
+   * Whether or not the target is an {@link BaseInteraction} or an {@link InteractionWebhook}
    * @type {boolean}
    * @readonly
    */
   get isInteraction() {
-    const Interaction = require('./Interaction');
+    const BaseInteraction = getBaseInteraction();
     const InteractionWebhook = require('./InteractionWebhook');
-    return this.target instanceof Interaction || this.target instanceof InteractionWebhook;
+    return this.target instanceof BaseInteraction || this.target instanceof InteractionWebhook;
   }
 
   /**
@@ -105,7 +108,7 @@ class MessagePayload {
     if (this.options.content === null) {
       content = '';
     } else if (typeof this.options.content !== 'undefined') {
-      content = Util.verifyString(this.options.content, RangeError, 'MESSAGE_CONTENT_TYPE', true);
+      content = verifyString(this.options.content, DiscordjsRangeError, ErrorCodes.MessageContentType, true);
     }
 
     return content;
@@ -126,9 +129,8 @@ class MessagePayload {
     let nonce;
     if (typeof this.options.nonce !== 'undefined') {
       nonce = this.options.nonce;
-      // eslint-disable-next-line max-len
       if (typeof nonce === 'number' ? !Number.isInteger(nonce) : typeof nonce !== 'string') {
-        throw new RangeError('MESSAGE_NONCE_TYPE');
+        throw new DiscordjsRangeError(ErrorCodes.MessageNonceType);
       }
     }
 
@@ -136,9 +138,11 @@ class MessagePayload {
 
     let username;
     let avatarURL;
+    let threadName;
     if (isWebhook) {
       username = this.options.username ?? this.target.name;
       if (this.options.avatarURL) avatarURL = this.options.avatarURL;
+      if (this.options.threadName) threadName = this.options.threadName;
     }
 
     let flags;
@@ -163,9 +167,8 @@ class MessagePayload {
         ? this.target.client.options.allowedMentions
         : this.options.allowedMentions;
 
-    if (allowedMentions) {
-      allowedMentions = Util.cloneObject(allowedMentions);
-      allowedMentions.replied_user = allowedMentions.repliedUser;
+    if (typeof allowedMentions?.repliedUser !== 'undefined') {
+      allowedMentions = { ...allowedMentions, replied_user: allowedMentions.repliedUser };
       delete allowedMentions.repliedUser;
     }
 
@@ -207,6 +210,7 @@ class MessagePayload {
       message_reference,
       attachments: this.options.attachments,
       sticker_ids: this.options.stickers?.map(sticker => sticker.id ?? sticker),
+      thread_name: threadName,
     };
     return this;
   }
@@ -224,7 +228,8 @@ class MessagePayload {
 
   /**
    * Resolves a single file into an object sendable to the API.
-   * @param {BufferResolvable|Stream|FileOptions|Attachment} fileLike Something that could be resolved to a file
+   * @param {BufferResolvable|Stream|JSONEncodable<AttachmentPayload>} fileLike Something that could
+   * be resolved to a file
    * @returns {Promise<RawFile>}
    */
   static async resolveFile(fileLike) {
@@ -233,11 +238,11 @@ class MessagePayload {
 
     const findName = thing => {
       if (typeof thing === 'string') {
-        return Util.basename(thing);
+        return basename(thing);
       }
 
       if (thing.path) {
-        return Util.basename(thing.path);
+        return basename(thing.path);
       }
 
       return 'file.jpg';
@@ -253,15 +258,15 @@ class MessagePayload {
       name = fileLike.name ?? findName(attachment);
     }
 
-    const data = await DataResolver.resolveFile(attachment);
-    return { data, name };
+    const { data, contentType } = await DataResolver.resolveFile(attachment);
+    return { data, name, contentType };
   }
 
   /**
    * Creates a {@link MessagePayload} from user-level arguments.
    * @param {MessageTarget} target Target to send to
-   * @param {string|MessageOptions|WebhookMessageOptions} options Options or content to use
-   * @param {MessageOptions|WebhookMessageOptions} [extra={}] Extra options to add onto specified options
+   * @param {string|MessagePayloadOption} options Options or content to use
+   * @param {MessagePayloadOption} [extra={}] Extra options to add onto specified options
    * @returns {MessagePayload}
    */
   static create(target, options, extra = {}) {
@@ -276,8 +281,14 @@ module.exports = MessagePayload;
 
 /**
  * A target for a message.
- * @typedef {TextBasedChannel|User|GuildMember|Webhook|WebhookClient|Interaction|InteractionWebhook|
+ * @typedef {TextBasedChannels|User|GuildMember|Webhook|WebhookClient|BaseInteraction|InteractionWebhook|
  * Message|MessageManager} MessageTarget
+ */
+
+/**
+ * A possible payload option.
+ * @typedef {MessageCreateOptions|MessageEditOptions|WebhookCreateMessageOptions|WebhookEditMessageOptions|
+ * InteractionReplyOptions|InteractionUpdateOptions} MessagePayloadOption
  */
 
 /**

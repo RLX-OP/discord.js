@@ -1,6 +1,14 @@
-import { APIMessageComponent, APIModalComponent, ComponentType } from 'discord-api-types/v10';
-import type { AnyComponentBuilder, MessageComponentBuilder, ModalComponentBuilder } from './ActionRow';
-import { ActionRowBuilder, ButtonBuilder, ComponentBuilder, SelectMenuBuilder, TextInputBuilder } from '../index';
+import { ComponentType, type APIMessageComponent, type APIModalComponent } from 'discord-api-types/v10';
+import {
+	ActionRowBuilder,
+	type AnyComponentBuilder,
+	type MessageComponentBuilder,
+	type ModalComponentBuilder,
+} from './ActionRow.js';
+import { ComponentBuilder } from './Component.js';
+import { ButtonBuilder } from './button/Button.js';
+import { SelectMenuBuilder } from './selectMenu/SelectMenu.js';
+import { TextInputBuilder } from './textInput/TextInput.js';
 
 export interface MappedComponentTypes {
 	[ComponentType.ActionRow]: ActionRowBuilder<AnyComponentBuilder>;
@@ -11,10 +19,12 @@ export interface MappedComponentTypes {
 
 /**
  * Factory for creating components from API data
- * @param data The api data to transform to a component class
+ *
+ * @param data - The api data to transform to a component class
  */
 export function createComponentBuilder<T extends keyof MappedComponentTypes>(
-	data: (APIMessageComponent | APIModalComponent) & { type: T },
+	// eslint-disable-next-line @typescript-eslint/sort-type-union-intersection-members
+	data: (APIModalComponent | APIMessageComponent) & { type: T },
 ): MappedComponentTypes[T];
 export function createComponentBuilder<C extends MessageComponentBuilder | ModalComponentBuilder>(data: C): C;
 export function createComponentBuilder(
@@ -34,8 +44,7 @@ export function createComponentBuilder(
 		case ComponentType.TextInput:
 			return new TextInputBuilder(data);
 		default:
-			// @ts-expect-error
-			// eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+			// @ts-expect-error: This case can still occur if we get a newer unsupported component type
 			throw new Error(`Cannot properly serialize component type: ${data.type}`);
 	}
 }
